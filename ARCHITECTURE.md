@@ -26,10 +26,12 @@ ParallelRunner/
 │       └── README.md          # Documentation on custom loggers
 │
 ├── tests/
-│   └── robot/                 # Robot Framework acceptance suites
-│       ├── test_api.robot           # Happy path tests (sequential & parallel)
-│       ├── test_api_negative.robot  # Tests with warnings/errors
-│       └── test_custom_logger.robot # Tests with custom logger adapter
+│   └── robot/                          # Robot Framework acceptance suites
+│       ├── test_api.robot              # Happy path tests (sequential & parallel)
+│       ├── test_api_negative.robot     # Tests with warnings/errors
+│       ├── test_repeat.robot           # `repeat` usage: data setup, fixed-endpoint calls
+│       ├── test_custom_logger.robot    # Tests with an explicit custom logger adapter
+│       └── test_custom_logger_with_env.robot  # Same, via ROBOT_LOGGER_MAPPER env var
 │
 ├── docs/                      # User-facing documentation
 ├── pyproject.toml             # Packaging metadata (installable via pip)
@@ -235,13 +237,15 @@ Python's GIL (Global Interpreter Lock) limits CPU-bound parallelization. For hea
 
 ## Testing Coverage
 
-Total: **15 test cases** across 3 test suites
+Total: **27 test cases** across 5 test suites
 
 | Suite | Cases | Coverage |
 |-------|-------|----------|
 | test_api.robot | 2 | Happy path (sequential & parallel) |
 | test_api_negative.robot | 10 | Warnings, errors, log levels, filtering |
-| test_custom_logger.robot | 5 | Custom logger adapter integration |
+| test_repeat.robot | 4 | `repeat`: parallel data creation, fixed-endpoint calls, precedence vs. `for_loop_iterable`, default (neither given) |
+| test_custom_logger.robot | 5 | Custom logger adapter integration, passed explicitly |
+| test_custom_logger_with_env.robot | 6 | Same, configured via `ROBOT_LOGGER_MAPPER` env var |
 
 Run all tests:
 

@@ -83,6 +83,58 @@ class ApiClient:
             
         return data
 
+    def create_test_record(self, index: int, _logger: Optional[Callable] = None, **kwargs) -> dict:
+        """
+        Creates one new record via POST, meant to be driven by `repeat` rather
+        than `for_loop_iterable`: there is no pre-existing list of items here,
+        the goal is simply "create N independent records concurrently"
+        (e.g. seeding test data in a Suite Setup). `index` is only used to
+        keep each record's payload unique across the N parallel calls; any
+        value shared by every call (e.g. `title_prefix`) should be passed as
+        a kwarg instead, since it's identical for every task.
+        """
+        log = _logger if _logger else default_log
+
+        title_prefix = kwargs.get("title_prefix", "record")
+        payload = {"title": f"{title_prefix}-{index}", "body": "created in parallel", "userId": index + 1}
+
+        log(f"Creating record #{index} with title '{payload['title']}'")
+
+        url = "https://jsonplaceholder.typicode.com/posts"
+        response = requests.post(url, json=payload, timeout=10)
+
+        if response.status_code not in (200, 201):
+            log(f"Failed to create record #{index}", "ERROR")
+            raise Exception(f"API Error: {response.status_code}")
+
+        data = response.json()
+        log(f"Record #{index} created with id {data.get('id')}")
+        return data
+
+    def check_endpoint_health(self, call_index: int, _logger: Optional[Callable] = None, **kwargs) -> dict:
+        """
+        Calls a single, fixed endpoint (identified by the `agent_id` kwarg,
+        the same for every call) repeatedly. Meant to be driven by `repeat`:
+        `call_index` is not used to select what to call, only to label each
+        of the N concurrent calls in the logs/results. Useful for a light
+        concurrent load check, or to catch failures that only show up when
+        the same endpoint is hit by several threads at once.
+        """
+        log = _logger if _logger else default_log
+
+        agent_id = kwargs.get("agent_id", "1")
+        log(f"Health check call #{call_index} against agent {agent_id}")
+
+        url = f"https://jsonplaceholder.typicode.com/users/{agent_id}"
+        response = requests.get(url, timeout=10)
+
+        if response.status_code != 200:
+            log(f"Call #{call_index} failed with status {response.status_code}", "ERROR")
+            raise Exception(f"API Error: {response.status_code}")
+
+        log(f"Call #{call_index} succeeded")
+        return {"call_index": call_index, "status_code": response.status_code}
+
     def validate_agents_with_errors(self, agent_id: str, _logger: Optional[Callable] = None, **kwargs) -> dict:
         """
         Validates agent data and raises errors for certain IDs.

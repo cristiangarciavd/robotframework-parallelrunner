@@ -39,7 +39,10 @@ session-scoped) `IMPROVEMENT_PLAN.md`.
 - `CODE_OF_CONDUCT.md` (Contributor Covenant)
 
 **Tests**
-- 15+ Robot Framework test cases across 4 suites under `tests/robot/`, all passing
+- 27 Robot Framework test cases across 5 suites under `tests/robot/`, all passing,
+  including a dedicated `test_repeat.robot` covering the `repeat` parameter
+  (parallel data setup, repeated calls to a fixed endpoint, precedence vs.
+  `for_loop_iterable`, and the no-argument default)
 
 **CI**
 - `.github/workflows/tests.yml`: installs the package and runs the Robot Framework

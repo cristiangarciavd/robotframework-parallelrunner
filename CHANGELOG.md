@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `tests/robot/test_repeat.robot`: 4 new test cases covering the `repeat`
+  parameter, previously undocumented by example — parallel test-data
+  creation, repeated calls against a fixed endpoint, precedence of
+  `for_loop_iterable` over `repeat` when both are given, and the
+  no-argument default (runs once).
+- `ApiClient.create_test_record` and `ApiClient.check_endpoint_health` in
+  `examples/api_client/api_client.py`, backing the new test suite.
+
 ### Changed
 - Moved `AI_AGENT_CONTEXT.md` out of the repository into a local, gitignored
   `notes/` folder — it's a maintainer-facing working doc (AI-agent onboarding
