@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robotframework-parallelrunner"
+version = "0.1.0"
+description = "Thread-based parallel execution of a keyword/method inside a single Robot Framework test case, with clean log.html output."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.8"
+authors = [
+    { name = "Cristian Garcia", email = "cristian.garcia.vd@gmail.com" },
+]
+keywords = [
+    "robotframework",
+    "robot-framework",
+    "parallel",
+    "threading",
+    "testing",
+    "automation",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Robot Framework",
+    "Framework :: Robot Framework :: Library",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "robotframework>=5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "robotframework",
+    "build",
+    "requests",
+]
+
+[project.urls]
+Homepage = "https://github.com/cristiangarcia/robotframework-parallelrunner"
+Documentation = "https://github.com/cristiangarcia/robotframework-parallelrunner/tree/main/docs"
+Repository = "https://github.com/cristiangarcia/robotframework-parallelrunner"
+Changelog = "https://github.com/cristiangarcia/robotframework-parallelrunner/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]

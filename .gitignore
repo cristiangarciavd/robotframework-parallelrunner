@@ -1,0 +1,31 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging / build artifacts
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Environments
+.env
+.venv/
+venv/
+env/
+
+# Robot Framework output artifacts
+output.xml
+log.html
+report.html
+robot_results/
+*.robolog
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
