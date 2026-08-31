@@ -66,3 +66,9 @@ robot --pythonpath . --outputdir robot_results tests/robot/
 ```
 
 See [QUICKSTART.md](QUICKSTART.md) for a walkthrough.
+
+## Optional: UI automation example (Playwright)
+
+Not installed by `.[dev]` and not run by the test command above. See
+[examples/playwright_ui/README.md](../examples/playwright_ui/README.md) if
+you want to try it — it requires its own extra plus a browser download.

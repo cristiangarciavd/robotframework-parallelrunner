@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `examples/playwright_ui/`: optional, opt-in example demonstrating UI
+  automation with Playwright's official `sync_api`. Not part of the `dev`
+  extra or CI — install separately via `pip install -e ".[playwright-example]"`
+  plus `playwright install chromium`; see that folder's README. Verified
+  working locally (1/1 test passing).
 - `tests/robot/test_repeat.robot`: 4 new test cases covering the `repeat`
   parameter, previously undocumented by example — parallel test-data
   creation, repeated calls against a fixed endpoint, precedence of

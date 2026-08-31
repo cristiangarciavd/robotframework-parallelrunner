@@ -18,12 +18,17 @@ ParallelRunner/
 │   │   ├── __init__.py
 │   │   └── api_client.py      # Example API client with logging
 │   │
-│   └── custom_logger/         # Custom logging adapter examples
-│       ├── __init__.py
-│       ├── custom_logger.py                # Custom severity-based logger
-│       ├── custom_logging_mapper.py        # Mapper for custom logger format
-│       ├── custom_logger_api_client.py     # Example using custom logger
-│       └── README.md          # Documentation on custom loggers
+│   ├── custom_logger/         # Custom logging adapter examples
+│   │   ├── __init__.py
+│   │   ├── custom_logger.py                # Custom severity-based logger
+│   │   ├── custom_logging_mapper.py        # Mapper for custom logger format
+│   │   ├── custom_logger_api_client.py     # Example using custom logger
+│   │   └── README.md          # Documentation on custom loggers
+│   │
+│   └── playwright_ui/         # OPTIONAL: UI automation example (not in `dev` extras or CI)
+│       ├── ui_client.py       # Playwright sync_api, one browser per call (thread-safe)
+│       ├── test_playwright_ui.robot   # Lives here, not under tests/robot/, on purpose
+│       └── README.md          # Opt-in install/run instructions
 │
 ├── tests/
 │   └── robot/                          # Robot Framework acceptance suites

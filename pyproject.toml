@@ -46,6 +46,11 @@ dev = [
     "build",
     "requests",
 ]
+# Optional, opt-in only: powers examples/playwright_ui/, not part of `dev` or CI.
+# See examples/playwright_ui/README.md - also run `playwright install chromium` after installing.
+playwright-example = [
+    "playwright>=1.40",
+]
 
 [project.urls]
 Homepage = "https://github.com/cristiangarcia/robotframework-parallelrunner"

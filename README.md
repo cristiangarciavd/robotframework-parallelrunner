@@ -132,6 +132,14 @@ ParallelRunner/
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full breakdown and design
 principles.
 
+### Optional: UI automation with Playwright
+
+The same thread-pool approach applies to browser automation, not just HTTP
+calls — see [examples/playwright_ui/](examples/playwright_ui/) for a
+worked example using Playwright's official `sync_api`. It's kept out of
+the default install and CI (heavy dependency, real browser download), so
+it's opt-in: read that folder's README before installing anything.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
