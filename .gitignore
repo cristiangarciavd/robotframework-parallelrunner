@@ -22,6 +22,9 @@ report.html
 robot_results/
 *.robolog
 
+# Local-only notes (personal working docs, not shipped with the project)
+notes/
+
 # IDE
 .idea/
 .vscode/

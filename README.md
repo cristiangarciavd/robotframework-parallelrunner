@@ -126,8 +126,7 @@ ParallelRunner/
 ├── examples/               # Example "business logic" libraries used by the test suites
 ├── tests/robot/            # Robot Framework acceptance suites
 ├── docs/                   # INSTALLATION, QUICKSTART, API_REFERENCE
-├── ARCHITECTURE.md         # Technical deep dive
-└── AI_AGENT_CONTEXT.md     # Onboarding doc for AI coding agents working on this repo
+└── ARCHITECTURE.md         # Technical deep dive
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full breakdown and design

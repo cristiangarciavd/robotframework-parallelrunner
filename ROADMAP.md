@@ -30,7 +30,6 @@ session-scoped) `IMPROVEMENT_PLAN.md`.
 **Documentation**
 - `README.md` with quickstart and a "How is this different from pabot?" comparison
 - `ARCHITECTURE.md` (technical deep dive)
-- `AI_AGENT_CONTEXT.md` (onboarding doc for AI coding agents)
 - `docs/INSTALLATION.md`, `docs/QUICKSTART.md`, `docs/API_REFERENCE.md`
 - `CHANGELOG.md` (Keep a Changelog format)
 - `examples/custom_logger/README.md` and `ENVIRONMENT_SETUP.md`

@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+- Moved `AI_AGENT_CONTEXT.md` out of the repository into a local, gitignored
+  `notes/` folder — it's a maintainer-facing working doc (AI-agent onboarding
+  for development), not user-facing documentation, so it's no longer shipped.
 
 ## [0.1.0] - 2026-08-30
 
