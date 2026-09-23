@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python >= 3.8
+- Python >= 3.9
 - [Robot Framework](https://robotframework.org/) >= 5.0 (installed automatically as a dependency)
 
 ## Install from source (current recommended method)

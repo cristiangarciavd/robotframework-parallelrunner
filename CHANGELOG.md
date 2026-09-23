@@ -71,6 +71,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `notes/` folder — it's a maintainer-facing working doc (AI-agent onboarding
   for development), not user-facing documentation, so it's no longer shipped.
 
+### Fixed
+- **Python 3.8 was actually uninstallable, not just untested.** `pyproject.toml`'s
+  `license = "MIT"` (PEP 639 SPDX string form) requires setuptools >=77.0.1 to
+  parse — but setuptools itself dropped Python 3.8 support at 76.0.0, so no
+  setuptools version could satisfy both at once. `pip install` (editable or
+  wheel) failed outright on a fresh Python 3.8 environment before any of this
+  project's own code ran. Confirmed by reproducing the failure in a clean
+  `python:3.8-slim` container (and the fix in a clean `python:3.9-slim` one,
+  full test suite passing). Fixed by bumping `requires-python` to `>=3.9`,
+  dropping the `Python :: 3.8` classifier, and tightening
+  `[build-system] requires` to the real floor, `setuptools>=77.0.1` (was
+  `>=68.0`, which only worked by luck on whatever newer setuptools happened
+  to get resolved). `docs/INSTALLATION.md` updated to match. No source code
+  changes were needed — this was a packaging-metadata/toolchain constraint,
+  not a language-compatibility issue.
+
 ## [0.1.0] - 2026-08-30
 
 Initial professional release. This version restructures the project from an
