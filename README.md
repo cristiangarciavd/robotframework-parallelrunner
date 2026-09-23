@@ -123,6 +123,22 @@ for pabot. If you need to speed up "this one test case loops over 100 items
 and I want a single readable log instead of 100 sequential HTTP round trips
 (or 100 merged `output.xml` files)," that's what ParallelRunner is for.
 
+## When Not To Use This
+
+- **CPU-bound work.** Threads share Python's GIL — number crunching won't
+  get faster this way. Use `multiprocessing`, or pabot (separate processes),
+  instead.
+- **Your keyword mutates shared state without synchronization.** Logging is
+  made thread-safe for you; your own keyword's side effects are not. If it
+  writes to a shared variable, file, or object without a lock, running it
+  concurrently can race the same way any multi-threaded code can.
+- **You need per-item retries or a timeout.** Not implemented yet (see
+  [ROADMAP.md](ROADMAP.md)) — one hung call currently blocks the whole batch
+  from returning.
+- **You need process-level isolation** (a crash in one call shouldn't be
+  able to affect another) or cross-machine parallelism — that's pabot's
+  domain, not this library's.
+
 ## Project Structure
 
 ```
