@@ -260,13 +260,13 @@ Python's GIL (Global Interpreter Lock) limits CPU-bound parallelization. For hea
 
 ## Testing Coverage
 
-Total: **35 test cases** across 6 test suites
+Total: **36 test cases** across 6 test suites
 
 | Suite | Cases | Coverage |
 |-------|-------|----------|
 | test_api.robot | 2 | Happy path (sequential & parallel) |
 | test_api_negative.robot | 10 | Warnings, errors, log levels, filtering |
-| test_repeat.robot | 5 | `repeat`: parallel data creation, fixed-endpoint calls, precedence vs. `for_loop_iterable`, default (neither given), `return_values_only` unpacking |
+| test_repeat.robot | 6 | `repeat`: parallel data creation, fixed-endpoint calls, precedence vs. `for_loop_iterable`, default (neither given), `return_values_only` unpacking, explicit `repeat=0` runs zero times |
 | test_return_values.robot | 7 | Call-order guarantees (`repeat` and `for_loop_iterable`), `return_values_only` (success and `ParallelTaskError` on failure), standalone `Get Result Values` |
 | test_custom_logger.robot | 5 | Custom logger adapter integration, passed explicitly |
 | test_custom_logger_with_env.robot | 6 | Same, configured via `ROBOT_LOGGER_MAPPER` env var |

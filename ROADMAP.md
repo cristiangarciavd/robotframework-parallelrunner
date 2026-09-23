@@ -47,12 +47,13 @@ session-scoped) `IMPROVEMENT_PLAN.md`.
 - `CODE_OF_CONDUCT.md` (Contributor Covenant)
 
 **Tests**
-- 35 Robot Framework test cases across 6 suites under `tests/robot/`, all passing,
+- 36 Robot Framework test cases across 6 suites under `tests/robot/`, all passing,
   including a dedicated `test_repeat.robot` covering the `repeat` parameter
   (parallel data setup, repeated calls to a fixed endpoint, precedence vs.
-  `for_loop_iterable`, the no-argument default, and `return_values_only`) and
-  `test_return_values.robot` (call-order guarantees, `return_values_only`,
-  `Get Result Values`, and `ParallelTaskError` on failure)
+  `for_loop_iterable`, the no-argument default, `return_values_only`, and the
+  `repeat=0` regression) and `test_return_values.robot` (call-order
+  guarantees, `return_values_only`, `Get Result Values`, and
+  `ParallelTaskError` on failure)
 
 **CI**
 - `.github/workflows/tests.yml`: installs the package and runs the Robot Framework

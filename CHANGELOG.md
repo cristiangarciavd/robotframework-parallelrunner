@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to get resolved). `docs/INSTALLATION.md` updated to match. No source code
   changes were needed — this was a packaging-metadata/toolchain constraint,
   not a language-compatibility issue.
+- **`repeat=0` silently ran the keyword once instead of zero times.**
+  `run_parallel_scenarios` computed the item list as `range(repeat or 1)`;
+  since `0` is falsy in Python, an explicit `repeat=0` was indistinguishable
+  from `repeat` not being given at all, and fell back to `range(1)`. Fixed
+  by checking `repeat is None` instead of truthiness, so `repeat=0` now
+  correctly produces zero calls and an empty result list — matching what
+  `for_loop_iterable=${EMPTY_LIST}` already did. Covered by a new regression
+  test, `Explicit Repeat Of Zero Runs Zero Times`, in `test_repeat.robot`.
 
 ## [0.1.0] - 2026-08-30
 

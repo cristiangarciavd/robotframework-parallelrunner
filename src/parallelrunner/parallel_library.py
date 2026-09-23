@@ -79,8 +79,14 @@ class ParallelLibrary:
         - ROBOT_LOGGER_MAPPER: Global logger mapper name or module path (default: None)
           Example: ROBOT_LOGGER_MAPPER=custom_logger_adapter
         """
-        # Determine items to process
-        items = for_loop_iterable if for_loop_iterable is not None else range(repeat or 1)
+        # Determine items to process. NOTE: `repeat or 1` would be wrong here -
+        # 0 is falsy in Python, so an explicit repeat=0 would silently fall
+        # back to running once instead of zero times. Only a missing (None)
+        # repeat should default to 1.
+        if for_loop_iterable is not None:
+            items = for_loop_iterable
+        else:
+            items = range(1 if repeat is None else repeat)
 
         # Resolve mapper: it might be a callable or a string path
         effective_mapper = self._resolve_mapper(logger_mapper)

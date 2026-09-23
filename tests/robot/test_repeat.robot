@@ -50,14 +50,29 @@ For Loop Iterable Takes Precedence Over Repeat
 
 Neither For Loop Iterable Nor Repeat Runs Once
     [Documentation]    If neither `for_loop_iterable` nor `repeat` is given, the keyword
-    ...    still runs exactly once (`range(repeat or 1)` defaults to `range(1)`) - useful
-    ...    for a single one-off call that still benefits from the same buffered-log
-    ...    replay and structured result as a parallel run.
+    ...    still runs exactly once (`repeat` defaults to `None`, which maps to
+    ...    `range(1)`) - useful for a single one-off call that still benefits from
+    ...    the same buffered-log replay and structured result as a parallel run.
     ${results}=    Run Parallel Scenarios
     ...    keyword=Check Endpoint Health
     ...    library=${test_library}
     ...    agent_id=1
     Length Should Be    ${results}    1
+
+Explicit Repeat Of Zero Runs Zero Times
+    [Documentation]    Regression test: `repeat=0` must run the keyword ZERO times,
+    ...    not once. The naive `range(repeat or 1)` implementation treated an
+    ...    explicit `repeat=0` the same as "repeat not given" (`None`), because
+    ...    0 is falsy in Python - silently running the keyword once when the
+    ...    caller asked for zero calls (e.g. `repeat=${count}` where `${count}`
+    ...    legitimately evaluates to 0 at runtime). Fixed by distinguishing
+    ...    "repeat is None" (default to 1) from "repeat is 0" (run zero times).
+    ${results}=    Run Parallel Scenarios
+    ...    keyword=Check Endpoint Health
+    ...    library=${test_library}
+    ...    repeat=0
+    ...    agent_id=1
+    Length Should Be    ${results}    0
 
 Repeat With Return Values Only Unpacks Each Record Directly
     [Documentation]    `return_values_only=True` pairs naturally with `repeat`: since
