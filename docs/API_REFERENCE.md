@@ -36,8 +36,9 @@ def run_parallel_scenarios(
     remove_passing_logs: bool = False,
     thread_log_level: str = "INFO",
     logger_mapper: Optional[Any] = None,
+    return_values_only: bool = False,
     **kwargs: Any,
-) -> List[Dict[str, Any]]
+) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]
 ```
 
 Runs `keyword` once per item (or `repeat` times) on a thread pool, then replays
@@ -55,18 +56,30 @@ never gets corrupted by concurrent writes.
 | `remove_passing_logs` | `bool` | No | `False` | When `True`, only the log block for tasks with `status == "FAIL"` is replayed; passing tasks are skipped entirely (their result is still returned). |
 | `thread_log_level` | `str` | No | `"INFO"` | Minimum level to replay: one of `"INFO"`, `"WARN"`, `"ERROR"`. Uses the ordering `INFO(1) < WARN(2) < ERROR(3)`; messages below the threshold are dropped. `"IGNORE"`-level messages are always dropped regardless of this setting. |
 | `logger_mapper` | callable, `str`, or `None` | No | `None` | Custom logger adapter with signature `mapper(msg: str, level: str) -> None`. May be passed as a callable, or as a string module path (`"package.module.function"`) which is imported dynamically. If omitted, the library falls back to the `ROBOT_LOGGER_MAPPER` environment variable (see below). If neither is set, logs are captured internally and replayed through `robot.api.logger`. |
+| `return_values_only` | `bool` | No | `False` | When `True`, return a plain `tuple` of each call's return value - in call order - instead of the list of result dictionaries. Raises `ParallelTaskError` if any task failed (there is no meaningful value to put in its slot). This is the natural pairing with `repeat`: since there's no input list to zip results against, unpacking directly into N variables is often more convenient than indexing into a list of dicts - e.g. `${id1}    ${id2}    ${id3}=    Run Parallel Scenarios    ...    repeat=3    return_values_only=True`. Equivalent to calling `Get Result Values` on the default (dict-list) return value. |
 | `**kwargs` | `Any` | No | - | Any additional keyword arguments are forwarded verbatim to every call of `keyword`. |
 
 ### Return value
 
-A `list` of per-task result dictionaries, in completion order (i.e.
-`concurrent.futures.as_completed` order, not input order):
+**Default (`return_values_only=False`):** a `list` of per-task result
+dictionaries, **in call order** - `results[i]` corresponds to
+`for_loop_iterable[i]`, or to repeat index `i`. All tasks still run
+concurrently; only the order results are *collected* in is affected, so this
+holds regardless of which thread happens to finish first.
+
+> Prior to `return_values_only` being added, this list was collected in
+> `concurrent.futures.as_completed` (completion) order instead of call order.
+> That was a real ordering gap for direct indexing - see `CHANGELOG.md`.
 
 - On success: `{"status": "PASS", "item": <item>, "logs": [(level, msg), ...], "result": <return value of keyword>}`
 - On failure (the method raised): `{"status": "FAIL", "item": <item>, "logs": [(level, msg), ...], "error": "<exception message>"}`
 
 `item` is either the element from `for_loop_iterable` or the integer index
 from `range(repeat)`.
+
+**With `return_values_only=True`:** a plain `tuple` of each task's `result`
+value, in the same call order described above. Raises `ParallelTaskError`
+(see below) instead of returning anything if any task failed.
 
 ### Environment variables
 
@@ -95,6 +108,48 @@ def method_name(self, item, _logger: Optional[Callable] = None, **kwargs):
 - Return values are collected into the `"result"` field of the corresponding
   entry in the returned list.
 
+## `Get Result Values`
+
+Python signature:
+
+```python
+def get_result_values(self, results: List[Dict[str, Any]]) -> Tuple[Any, ...]
+```
+
+Extracts each task's `"result"` value out of a `run_parallel_scenarios`
+result list, preserving call order (`results[i]` → tuple index `i`). This is
+exactly what `return_values_only=True` does internally; use this standalone
+form when you want to inspect the full dict list first (e.g. assert on
+`status` or `logs`) before extracting the plain values, instead of getting
+the tuple in one step.
+
+```robot
+${results}=    Run Parallel Scenarios    keyword=Seed Fixture Record    library=${lib}    repeat=3
+${id1}    ${id2}    ${id3}=    Get Result Values    ${results}
+```
+
+Raises `ParallelTaskError` if any entry in `results` has `status == "FAIL"`.
+
+## `ParallelTaskError`
+
+```python
+from parallelrunner import ParallelTaskError
+```
+
+Raised by `Get Result Values` and by `Run Parallel Scenarios` (when called
+with `return_values_only=True`) if at least one task failed. A failed task
+has no return value, so raising loudly here - instead of silently
+substituting `None` - is what makes a test relying on `return_values_only`
+fail for the right reason instead of continuing with a hole in the data.
+
+- Subclass of `RuntimeError`.
+- `.failures`: the subset of result dicts with `status == "FAIL"`, in the
+  order they appear in the full result list. Each has the usual `item`,
+  `logs`, and `error` keys (see the `FAIL` shape under **Return value**
+  above).
+- `str(error)`: a human-readable summary, e.g.
+  `"2 of 5 parallel task(s) failed: item=4: Simulated error for agent 4; item=5: Simulated error for agent 5"`.
+
 ### Internal helper methods
 
 These are implementation details (prefixed with `_`), not part of the public
@@ -106,7 +161,7 @@ API, but documented here for maintainers:
 - `_execute_and_capture(method, item, logger_mapper, **kwargs)` - worker-thread entry point; buffers logs and captures pass/fail results.
 - `_replay_logs(results, remove_passing_logs, thread_log_level)` - replays buffered logs sequentially through `robot.api.logger`, applying filtering.
 
-## Example
+## Examples
 
 ```robot
 *** Settings ***
@@ -122,6 +177,43 @@ Verify Agents In Parallel
     ...    for_loop_iterable=${agents}
     ...    thread_log_level=WARN
     ...    remove_passing_logs=True
+```
+
+Seeding N independent fixture rows with `repeat`, and getting each row's
+generated id back directly via `return_values_only` (see
+`examples/db_seed/db_seed_client.py` and `tests/robot/test_return_values.robot`):
+
+```robot
+*** Settings ***
+Library    parallelrunner.parallel_library.ParallelLibrary
+Library    examples.db_seed.db_seed_client.DbSeedClient
+Suite Setup    Initialize Schema
+
+*** Test Cases ***
+Seed Fixture Rows In Parallel
+    ${id1}    ${id2}    ${id3}=    Run Parallel Scenarios
+    ...    keyword=Seed Fixture Record
+    ...    library=examples.db_seed.db_seed_client.DbSeedClient
+    ...    repeat=3
+    ...    name_prefix=order
+    ...    return_values_only=True
+```
+
+Post-deployment smoke test across several different service routes, using
+`return_values_only` to get back a plain tuple of status codes:
+
+```robot
+*** Test Cases ***
+Smoke Test Routes After Deploy
+    @{routes}=    Create List    users/1    posts/1    albums/1
+    ${status_codes}=    Run Parallel Scenarios
+    ...    keyword=Smoke Test Endpoint
+    ...    library=examples.api_client.api_client.ApiClient
+    ...    for_loop_iterable=${routes}
+    ...    return_values_only=True
+    FOR    ${code}    IN    @{status_codes}
+        Should Be Equal As Integers    ${code}    200
+    END
 ```
 
 See `tests/robot/` for further worked examples, including custom logger

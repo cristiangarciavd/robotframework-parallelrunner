@@ -13,8 +13,8 @@ Typical usage in a Robot Framework suite::
 See ARCHITECTURE.md and docs/ in the project repository for details.
 """
 
-from .parallel_library import ParallelLibrary
+from .parallel_library import ParallelLibrary, ParallelTaskError
 
 __version__ = "0.1.0"
 
-__all__ = ["ParallelLibrary", "__version__"]
+__all__ = ["ParallelLibrary", "ParallelTaskError", "__version__"]

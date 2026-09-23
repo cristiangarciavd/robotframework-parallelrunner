@@ -25,6 +25,10 @@ ParallelRunner/
 │   │   ├── custom_logger_api_client.py     # Example using custom logger
 │   │   └── README.md          # Documentation on custom loggers
 │   │
+│   ├── db_seed/                # Parallel test-data seeding example (stdlib sqlite3, no network)
+│   │   ├── __init__.py
+│   │   └── db_seed_client.py  # Flagship `repeat` + `return_values_only` use case
+│   │
 │   └── playwright_ui/         # OPTIONAL: UI automation example (not in `dev` extras or CI)
 │       ├── ui_client.py       # Playwright sync_api, one browser per call (thread-safe)
 │       ├── test_playwright_ui.robot   # Lives here, not under tests/robot/, on purpose
@@ -35,6 +39,7 @@ ParallelRunner/
 │       ├── test_api.robot              # Happy path tests (sequential & parallel)
 │       ├── test_api_negative.robot     # Tests with warnings/errors
 │       ├── test_repeat.robot           # `repeat` usage: data setup, fixed-endpoint calls
+│       ├── test_return_values.robot    # Result ordering guarantees, `return_values_only`, `Get Result Values`
 │       ├── test_custom_logger.robot    # Tests with an explicit custom logger adapter
 │       └── test_custom_logger_with_env.robot  # Same, via ROBOT_LOGGER_MAPPER env var
 │
@@ -80,8 +85,9 @@ run_parallel_scenarios(
     remove_passing_logs: bool = False,  # Hide logs for passing tasks
     thread_log_level: str = "INFO",     # Filter by level: INFO, WARN, ERROR
     logger_mapper: Optional[Callable] = None,  # Adapter for custom loggers
+    return_values_only: bool = False,  # Return a plain tuple of return values instead
     **kwargs: Any              # Extra args passed to method
-) -> List[Dict[str, Any]]
+) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]
 ```
 
 ### Parameters
@@ -95,7 +101,19 @@ run_parallel_scenarios(
 | `remove_passing_logs` | bool | Skip logs for passing tasks | False |
 | `thread_log_level` | str | Min level to show: INFO, WARN, ERROR | "INFO" |
 | `logger_mapper` | Callable | Custom logger adapter | None |
+| `return_values_only` | bool | Return a plain `tuple` of each call's return value (call order), instead of the list of result dicts. Raises `ParallelTaskError` on any failure. | False |
 | `**kwargs` | Any | Extra args for method | - |
+
+### Result ordering
+
+`results[i]` (or `return_values_only` tuple index `i`) always corresponds to
+`for_loop_iterable[i]`, or to repeat index `i` - **call order**, not
+`concurrent.futures.as_completed` completion order. Tasks are submitted to
+the executor up front (so they all start concurrently), and results are then
+collected by calling `.result()` on each future *in submission order*;
+`.result()` on an earlier future simply blocks until that specific task
+finishes, it does not force tasks to run one at a time. This makes direct
+indexing - and tuple-unpacking via `return_values_only` - safe to rely on.
 
 ### Method Signature Pattern
 
@@ -242,13 +260,14 @@ Python's GIL (Global Interpreter Lock) limits CPU-bound parallelization. For hea
 
 ## Testing Coverage
 
-Total: **27 test cases** across 5 test suites
+Total: **35 test cases** across 6 test suites
 
 | Suite | Cases | Coverage |
 |-------|-------|----------|
 | test_api.robot | 2 | Happy path (sequential & parallel) |
 | test_api_negative.robot | 10 | Warnings, errors, log levels, filtering |
-| test_repeat.robot | 4 | `repeat`: parallel data creation, fixed-endpoint calls, precedence vs. `for_loop_iterable`, default (neither given) |
+| test_repeat.robot | 5 | `repeat`: parallel data creation, fixed-endpoint calls, precedence vs. `for_loop_iterable`, default (neither given), `return_values_only` unpacking |
+| test_return_values.robot | 7 | Call-order guarantees (`repeat` and `for_loop_iterable`), `return_values_only` (success and `ParallelTaskError` on failure), standalone `Get Result Values` |
 | test_custom_logger.robot | 5 | Custom logger adapter integration, passed explicitly |
 | test_custom_logger_with_env.robot | 6 | Same, configured via `ROBOT_LOGGER_MAPPER` env var |
 

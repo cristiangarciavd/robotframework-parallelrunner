@@ -77,6 +77,11 @@ threading, buffering, and replay logic stay out of your `.robot` files.
   broken XML tags from concurrent writes.
 - **Flexibility.** Pass `repeat=10` to stress-test a single endpoint, or
   `for_loop_iterable=${items}` for batch validation of a whole list.
+- **Ergonomics.** Results come back in call order (not completion order), so
+  `${results}[0]` is always the first call. Add `return_values_only=True` to
+  skip the status/logs envelope entirely and unpack each call's return value
+  straight into its own variable — e.g. `${id1}    ${id2}    ${id3}=    Run Parallel Scenarios    ...    repeat=3    return_values_only=True`
+  when seeding N independent fixture rows.
 
 ## How Is This Different From pabot?
 

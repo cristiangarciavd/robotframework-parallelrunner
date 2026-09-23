@@ -135,6 +135,33 @@ class ApiClient:
         log(f"Call #{call_index} succeeded")
         return {"call_index": call_index, "status_code": response.status_code}
 
+    def smoke_test_endpoint(self, endpoint_path: str, _logger: Optional[Callable] = None, **kwargs) -> int:
+        """
+        Hits one endpoint path from a list of *different* routes and returns
+        its HTTP status code. Meant to be driven by `for_loop_iterable` with a
+        list of route paths - the shape of a real post-deployment smoke test
+        that fans out across several microservices/routes right after a
+        release, to catch a broken deploy before real traffic does.
+
+        Contrast with `check_endpoint_health`, which hits the SAME fixed
+        endpoint `repeat` times (a concurrent load check); this hits N
+        DIFFERENT endpoints once each (a release verification check). Pairs
+        well with `return_values_only=True`: the caller usually only cares
+        about "did every route come back 200", not the full response body.
+        """
+        log = _logger if _logger else default_log
+
+        log(f"Smoke testing endpoint: {endpoint_path}")
+        url = f"https://jsonplaceholder.typicode.com/{endpoint_path}"
+        response = requests.get(url, timeout=10)
+
+        if response.status_code != 200:
+            log(f"Endpoint '{endpoint_path}' returned {response.status_code}", "ERROR")
+            raise Exception(f"API Error: {response.status_code}")
+
+        log(f"Endpoint '{endpoint_path}' OK ({response.status_code})")
+        return response.status_code
+
     def validate_agents_with_errors(self, agent_id: str, _logger: Optional[Callable] = None, **kwargs) -> dict:
         """
         Validates agent data and raises errors for certain IDs.

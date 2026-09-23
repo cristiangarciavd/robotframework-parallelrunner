@@ -58,3 +58,23 @@ Neither For Loop Iterable Nor Repeat Runs Once
     ...    library=${test_library}
     ...    agent_id=1
     Length Should Be    ${results}    1
+
+Repeat With Return Values Only Unpacks Each Record Directly
+    [Documentation]    `return_values_only=True` pairs naturally with `repeat`: since
+    ...    there is no input list to zip results against, getting back a plain
+    ...    tuple - one entry per repeat call, in call order - lets each record be
+    ...    unpacked straight into its own variable instead of digging through a
+    ...    list of result dictionaries. Results are guaranteed to be in call order
+    ...    (repeat index 0, 1, 2, ...), not completion order, so `record1` here is
+    ...    always the index-0 call. See tests/robot/test_return_values.robot for
+    ...    the full ordering/failure guarantees and the standalone
+    ...    `Get Result Values` keyword.
+    ${record1}    ${record2}    ${record3}=    Run Parallel Scenarios
+    ...    keyword=Create Test Record
+    ...    library=${test_library}
+    ...    repeat=3
+    ...    title_prefix=fixture
+    ...    return_values_only=True
+    Should Be Equal    ${record1}[title]    fixture-0
+    Should Be Equal    ${record2}[title]    fixture-1
+    Should Be Equal    ${record3}[title]    fixture-2

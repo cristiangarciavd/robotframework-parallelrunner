@@ -14,6 +14,12 @@ session-scoped) `IMPROVEMENT_PLAN.md`.
 - Support for `for_loop_iterable` and `repeat`
 - Log filtering by level (`thread_log_level`)
 - Handling of `sv=0` / `"IGNORE"` level logs
+- Results collected in **call order** (`results[i]` matches `for_loop_iterable[i]`
+  / repeat index `i`), not `as_completed` completion order
+- `return_values_only` parameter and standalone `Get Result Values` keyword,
+  for extracting a plain, ordered tuple of each call's return value - the
+  natural fit for `repeat`, since there's no input list to zip results
+  against (see `ParallelTaskError`, raised if any task failed)
 
 **Custom logger support**
 - `_create_local_logger()` for local adaptation inside existing methods
@@ -24,6 +30,8 @@ session-scoped) `IMPROVEMENT_PLAN.md`.
 **Packaging and distribution**
 - `src/` layout with the installable package at `src/parallelrunner/`
 - `pyproject.toml` (PEP 621), installable via `pip install -e .`
+- `py.typed` marker (PEP 561) so type checkers respect the package's inline
+  type hints once installed
 - MIT `LICENSE`
 - `.gitignore`, `.editorconfig`
 
@@ -39,10 +47,12 @@ session-scoped) `IMPROVEMENT_PLAN.md`.
 - `CODE_OF_CONDUCT.md` (Contributor Covenant)
 
 **Tests**
-- 27 Robot Framework test cases across 5 suites under `tests/robot/`, all passing,
+- 35 Robot Framework test cases across 6 suites under `tests/robot/`, all passing,
   including a dedicated `test_repeat.robot` covering the `repeat` parameter
   (parallel data setup, repeated calls to a fixed endpoint, precedence vs.
-  `for_loop_iterable`, and the no-argument default)
+  `for_loop_iterable`, the no-argument default, and `return_values_only`) and
+  `test_return_values.robot` (call-order guarantees, `return_values_only`,
+  `Get Result Values`, and `ParallelTaskError` on failure)
 
 **CI**
 - `.github/workflows/tests.yml`: installs the package and runs the Robot Framework

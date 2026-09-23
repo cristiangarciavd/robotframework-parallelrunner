@@ -73,7 +73,32 @@ robot --pythonpath . my_suite.robot
 
 You'll get one `log.html` with a clearly grouped log block per item, plus a
 `${results}` list containing a `PASS`/`FAIL` status, the item, captured logs,
-and either the return value or the error message for each one.
+and either the return value or the error message for each one — in call
+order, so `${results}[0]` is always the first item/repeat call, regardless
+of which thread happened to finish first.
+
+## 4. Just want the return values?
+
+If you don't need the status/logs envelope — you only care about what each
+call returned — pass `return_values_only=True` to get a plain tuple instead,
+in the same call order. This is the natural fit for `repeat`, since there's
+no input list to zip results against:
+
+```robot
+*** Test Cases ***
+Seed Three Fixture Records
+    ${record1}    ${record2}    ${record3}=    Run Parallel Scenarios
+    ...    keyword=Process Item
+    ...    library=my_project.my_client.MyClient
+    ...    repeat=3
+    ...    return_values_only=True
+```
+
+If any of the N calls fails, this raises `ParallelTaskError` instead of
+silently putting `None` in that slot — see
+[API_REFERENCE.md](API_REFERENCE.md#get-result-values) for the standalone
+`Get Result Values` keyword, useful when you want to inspect the full
+result list before deciding whether to extract the values.
 
 ## Next steps
 

@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `return_values_only` parameter on `Run Parallel Scenarios`: when `True`,
+  returns a plain `tuple` of each call's return value (in call order)
+  instead of the list of result dictionaries, and raises `ParallelTaskError`
+  if any task failed. This is the natural pairing with `repeat` — since
+  there's no input list to zip results against, unpacking directly into N
+  variables (`${id1}    ${id2}    ${id3}=    Run Parallel Scenarios    ...    repeat=3    return_values_only=True`)
+  is more convenient than indexing into a list of dicts.
+- `Get Result Values` keyword (`ParallelLibrary.get_result_values`): the
+  standalone form of the above — extracts the value tuple from an
+  already-collected result list, for when you want to inspect `status`/`logs`
+  first. Same `ParallelTaskError`-on-failure behavior.
+- `ParallelTaskError` exception, exported from `parallelrunner`, raised by
+  both of the above on failure. Carries `.failures` (the failed result
+  dicts) for programmatic inspection, in addition to a human-readable
+  summary message.
+- `py.typed` marker (PEP 561) so type checkers (mypy/pyright) pick up this
+  package's inline type hints once it's installed.
+- `examples/db_seed/`: new example library (stdlib `sqlite3`, no network, no
+  extra dependency) demonstrating the flagship `repeat` + `return_values_only`
+  use case — seeding N independent fixture rows in parallel and getting each
+  row's generated primary key back directly, without digging into a list of
+  result dictionaries. Representative of seeding rows via a real DB
+  connection pool, an internal admin API, or a cloud SDK call that returns a
+  new resource's id.
+- `ApiClient.smoke_test_endpoint` in `examples/api_client/api_client.py`: a
+  second, realistic `for_loop_iterable` shape — hitting several *different*
+  service routes once each (a post-deployment smoke test across
+  microservices), contrasted with `check_endpoint_health`'s "hit the same
+  fixed endpoint N times" (`repeat`) shape.
+- `tests/robot/test_return_values.robot`: 7 new test cases covering result
+  ordering guarantees (for both `repeat` and `for_loop_iterable`),
+  `return_values_only` (success and `ParallelTaskError` on failure), and the
+  standalone `Get Result Values` keyword.
+- `tests/robot/test_repeat.robot`: 1 new test case pairing `repeat` with
+  `return_values_only`.
 - `examples/playwright_ui/`: optional, opt-in example demonstrating UI
   automation with Playwright's official `sync_api`. Not part of the `dev`
   extra or CI — install separately via `pip install -e ".[playwright-example]"`
@@ -22,6 +57,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `examples/api_client/api_client.py`, backing the new test suite.
 
 ### Changed
+- `Run Parallel Scenarios` now returns per-task results in **call order**
+  (`results[i]` matches `for_loop_iterable[i]`, or repeat index `i`) instead
+  of `concurrent.futures.as_completed` completion order. Concurrency is
+  unaffected — every task still runs at once — only the order results are
+  *collected* in changed. This was previously documented as completion
+  order; since that order depended on thread-scheduling timing and was not
+  reproducible, no real usage could have depended on a specific ordering, so
+  no migration action should be needed. If you were manually sorting
+  `results` by `item` to get a deterministic order, that workaround is no
+  longer necessary (but remains harmless).
 - Moved `AI_AGENT_CONTEXT.md` out of the repository into a local, gitignored
   `notes/` folder — it's a maintainer-facing working doc (AI-agent onboarding
   for development), not user-facing documentation, so it's no longer shipped.
