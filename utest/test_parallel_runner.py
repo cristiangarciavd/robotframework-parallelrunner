@@ -9,6 +9,7 @@ import importlib
 import random
 import sys
 import time
+import types
 import warnings
 
 import pytest
@@ -123,12 +124,101 @@ def test_remove_passing_logs_skips_passing_calls(runner, robot_logger):
     assert "Item: 2" in replayed
 
 
-def test_logger_mapper_resolution():
+class RecordingMapper:
+    """A logger mapper that just remembers what it was called with (thread-safe enough for list.append)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, msg, level="INFO"):
+        self.calls.append((level, msg))
+
+
+@pytest.fixture
+def mapper_module(monkeypatch):
+    """An importable module `fake_mappers` with a `record` mapper, for module.function paths."""
+    module = types.ModuleType("fake_mappers")
+    module.record = RecordingMapper()
+    module.not_callable = "just a string"
+    monkeypatch.setitem(sys.modules, "fake_mappers", module)
+    monkeypatch.delenv("ROBOT_LOGGER_MAPPER", raising=False)
+    return module
+
+
+def warnings_logged(robot_logger):
+    return [msg for level, msg in robot_logger.messages if level == "WARN"]
+
+
+def test_logger_mapper_resolution(robot_logger, mapper_module):
     lib = ParallelRunner()
-    assert lib._resolve_mapper(None) is None
     assert lib._resolve_mapper(print) is print
     assert lib._resolve_mapper("os.path.join") is __import__("os").path.join
-    assert lib._resolve_mapper("no.such.module.func") is None
+    assert lib._resolve_mapper("fake_mappers.record") is mapper_module.record
+    assert warnings_logged(robot_logger) == []
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_missing_mapper_is_silently_none(robot_logger, value):
+    assert ParallelRunner()._resolve_mapper(value) is None
+    assert warnings_logged(robot_logger) == []
+
+
+@pytest.mark.parametrize(
+    "value, reason",
+    [
+        ("custom_logger_adapter", "expected a 'module.function' path"),
+        ("no.such.module.func", "cannot import module 'no.such.module'"),
+        ("fake_mappers.missing", "module 'fake_mappers' has no callable 'missing'"),
+        ("fake_mappers.not_callable", "module 'fake_mappers' has no callable 'not_callable'"),
+        (42, "expected a callable or a 'module.function' string, got int"),
+    ],
+)
+def test_unresolvable_mapper_is_ignored_with_a_warning(robot_logger, mapper_module, value, reason):
+    assert ParallelRunner()._resolve_mapper(value) is None
+    (warning,) = warnings_logged(robot_logger)
+    assert f"Ignoring logger_mapper {value!r}" in warning
+    assert reason in warning
+
+
+def test_explicit_mapper_receives_the_logs_instead_of_the_buffer(runner, robot_logger, mapper_module):
+    results = runner.run_parallel_scenarios(
+        "Echo Item", "Fake", for_loop_iterable=[1, 2, 3], logger_mapper="fake_mappers.record"
+    )
+    assert sorted(mapper_module.record.calls) == [("INFO", "processing 1"), ("INFO", "processing 2"), ("INFO", "processing 3")]
+    assert all(entry["logs"] == [] for entry in results)
+
+
+def test_environment_mapper_path_is_used(runner, robot_logger, mapper_module, monkeypatch):
+    monkeypatch.setenv("ROBOT_LOGGER_MAPPER", "fake_mappers.record")
+    results = runner.run_parallel_scenarios("Echo Item", "Fake", repeat=2)
+    assert len(mapper_module.record.calls) == 2
+    assert all(entry["logs"] == [] for entry in results)
+    assert warnings_logged(robot_logger) == []
+
+
+def test_environment_bare_name_warns_and_falls_back_to_buffered_logs(runner, robot_logger, mapper_module, monkeypatch):
+    monkeypatch.setenv("ROBOT_LOGGER_MAPPER", "custom_logger_adapter")
+    results = runner.run_parallel_scenarios("Echo Item", "Fake", repeat=2)
+    (warning,) = warnings_logged(robot_logger)
+    assert "Ignoring ROBOT_LOGGER_MAPPER 'custom_logger_adapter'" in warning
+    assert [entry["logs"] for entry in results] == [[("INFO", "processing 0")], [("INFO", "processing 1")]]
+
+
+def test_explicit_mapper_wins_over_environment(runner, robot_logger, mapper_module, monkeypatch):
+    env_mapper = RecordingMapper()
+    mapper_module.env_record = env_mapper
+    monkeypatch.setenv("ROBOT_LOGGER_MAPPER", "fake_mappers.env_record")
+    runner.run_parallel_scenarios("Echo Item", "Fake", repeat=2, logger_mapper=mapper_module.record)
+    assert len(mapper_module.record.calls) == 2
+    assert env_mapper.calls == []
+
+
+def test_unresolvable_explicit_mapper_falls_back_to_environment(runner, robot_logger, mapper_module, monkeypatch):
+    monkeypatch.setenv("ROBOT_LOGGER_MAPPER", "fake_mappers.record")
+    runner.run_parallel_scenarios("Echo Item", "Fake", repeat=2, logger_mapper="typo_name")
+    assert len(mapper_module.record.calls) == 2
+    (warning,) = warnings_logged(robot_logger)
+    assert "Ignoring logger_mapper 'typo_name'" in warning
 
 
 def test_workers_come_from_environment(monkeypatch):

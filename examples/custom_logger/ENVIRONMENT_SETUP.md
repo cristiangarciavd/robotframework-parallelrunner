@@ -2,256 +2,151 @@
 
 ## The Problem
 
-Previously, you had to pass `logger_mapper` on **every single call** to `Run Parallel Scenarios`:
+Passing `logger_mapper` on **every single call** to `Run Parallel Scenarios`
+gets repetitive in projects with many tests and suites:
 
 ```robot
 Run Parallel Scenarios
     ...    keyword=Validate With Custom Logger
     ...    library=examples.custom_logger.custom_logger_api_client.CustomLoggerApiClient
     ...    for_loop_iterable=${agents}
-    ...    logger_mapper=custom_logger_adapter    # <- repeated on every test
+    ...    logger_mapper=examples.custom_logger.custom_logging_mapper.custom_logger_adapter    # <- repeated on every test
 ```
-
-**Downside:** with many tests and suites, this parameter gets repeated constantly.
 
 ## Solution: the `ROBOT_LOGGER_MAPPER` Environment Variable
 
-You can now configure a mapper **globally** for the whole project. The library will pick it up automatically.
+Set a mapper **once** for the whole run, and ParallelRunner uses it whenever
+`logger_mapper` is not given.
 
-### Option 1: System Environment Variable
+Two rules:
+
+- **The value must be a full `module.function` path**, e.g.
+  `examples.custom_logger.custom_logging_mapper.custom_logger_adapter`.
+  Bare names such as `custom_logger_adapter` are not supported: ParallelRunner
+  ignores them with a warning in the log and uses its default logger.
+- **It must be a real environment variable.** A Robot Framework variable
+  passed with `robot --variable ROBOT_LOGGER_MAPPER:...` is *not* read.
+
+### Option 1: Shell Environment Variable
 
 ```bash
+# Linux/Mac
+export ROBOT_LOGGER_MAPPER=examples.custom_logger.custom_logging_mapper.custom_logger_adapter
+robot --pythonpath . atest/
+
 # Windows (PowerShell)
-$env:ROBOT_LOGGER_MAPPER = "custom_logger_adapter"
-robot --pythonpath . .
+$env:ROBOT_LOGGER_MAPPER = "examples.custom_logger.custom_logging_mapper.custom_logger_adapter"
+robot --pythonpath . atest/
 
 # Windows (CMD)
-set ROBOT_LOGGER_MAPPER=custom_logger_adapter
-robot --pythonpath . .
-
-# Linux/Mac
-export ROBOT_LOGGER_MAPPER=custom_logger_adapter
-robot --pythonpath . .
+set ROBOT_LOGGER_MAPPER=examples.custom_logger.custom_logging_mapper.custom_logger_adapter
+robot --pythonpath . atest/
 ```
 
-### Option 2: Command-Line Variable
-
-```bash
-robot --pythonpath . --variable ROBOT_LOGGER_MAPPER:custom_logger_adapter .
-```
-
-### Option 3: In the Suite (Robot Framework)
+### Option 2: In the Suite (Robot Framework)
 
 ```robot
 *** Settings ***
-Suite Setup    Set Environment Variable    ROBOT_LOGGER_MAPPER    custom_logger_adapter
+Library           OperatingSystem
+Library           ParallelRunner
+Library           examples.custom_logger.custom_logger_api_client.CustomLoggerApiClient
+Suite Setup       Set Environment Variable    ROBOT_LOGGER_MAPPER    examples.custom_logger.custom_logging_mapper.custom_logger_adapter
+Suite Teardown    Remove Environment Variable    ROBOT_LOGGER_MAPPER
 
 *** Test Cases ***
 Validate Users In Parallel
     # No need to pass logger_mapper anymore
+    ${agents}=    Create List    1    2    3
     Run Parallel Scenarios
     ...    keyword=Validate With Custom Logger
     ...    library=examples.custom_logger.custom_logger_api_client.CustomLoggerApiClient
     ...    for_loop_iterable=${agents}
 ```
 
+Environment variables are process-wide: the `Suite Teardown` keeps the mapper
+from leaking into suites that run afterwards. `atest/test_custom_logger_with_env.robot`
+is a working example.
+
 ## Available Mappers
 
 ### 1. `custom_logger_adapter`
 
-Built-in mapper for a severity-based custom logger (sv=0,1,2,3).
+Ready-made mapper for the severity-based custom logger in this folder
+(sv=0,1,2,3). Its full path is:
 
-```python
-from examples.custom_logger.custom_logging_mapper import custom_logger_adapter
-
-# Automatically available as a registered mapper
+```
+examples.custom_logger.custom_logging_mapper.custom_logger_adapter
 ```
 
-**Handling sv=0 (IGNORE):**
-- Logs with `"IGNORE"` as their level are excluded from the parallel replay
-- Ideal for debug messages you don't want showing up in production logs
+`IGNORE`-level messages (sv=0) are dropped, which is handy for debug
+messages you don't want in production logs.
 
-### 2. Creating Your Own Mapper
+### 2. Your Own Mapper
 
-```python
-# my_mappers.py
-def my_custom_logger(msg, level="INFO"):
-    """Adapter for your own custom log format."""
-    level_map = {
-        "INFO": "log_info",
-        "WARN": "log_warn",
-        "ERROR": "log_error",
-        "IGNORE": "no_op",
-    }
-
-    func_name = level_map.get(level, "log_info")
-    if func_name == "no_op":
-        return  # Ignore IGNORE-level logs
-
-    # Call your own logging system
-    my_logging_system.emit(func_name, msg)
-```
-
-Then register it:
+A mapper is any function with the signature `mapper(msg, level="INFO")`:
 
 ```python
-# __init__.py or setup module
-from examples.custom_logger.custom_logging_mapper import register_mapper
-from my_mappers import my_custom_logger
-
-register_mapper("my_custom_logger", my_custom_logger)
+# my_project/loggers.py
+def project_logger(msg, level="INFO"):
+    """Adapter for my own logging system."""
+    if level == "IGNORE":
+        return
+    my_logging_system.emit(level, msg)
 ```
 
-And use it:
+Use it by its full path, as long as the module is importable (for example
+with `--pythonpath .`):
 
 ```bash
-export ROBOT_LOGGER_MAPPER=my_custom_logger
-robot --pythonpath . .
-```
-
-### 3. Mapper by Full Module Path
-
-```bash
-# Use the full module path
-robot --variable ROBOT_LOGGER_MAPPER:examples.custom_logger.custom_logging_mapper.custom_logger_adapter .
+export ROBOT_LOGGER_MAPPER=my_project.loggers.project_logger
+robot --pythonpath . tests/
 ```
 
 ## Handling `sv=0` (IGNORE)
 
-The special `"IGNORE"` level (which corresponds to sv=0) is **automatically filtered out** in:
+The special `"IGNORE"` level (sv=0) is dropped:
 
-1. **Direct execution:** if you call `log(msg, "IGNORE")`, it isn't recorded
-2. **Parallel execution:** logs with `"IGNORE"` don't appear in the replay
-
-Example:
+1. **Direct execution:** `_create_local_logger()` doesn't log it.
+2. **Parallel execution, default logger:** IGNORE messages aren't replayed.
+3. **Parallel execution, with a mapper:** the mappers in this folder drop it;
+   your own mapper should too.
 
 ```python
 def validate_user(self, user_id: str, _logger=None, **kwargs):
     log = _logger if _logger else _create_local_logger()
 
-    log(f"Starting validation", "INFO")      # visible
+    log("Starting validation", "INFO")      # visible
     log(f"Debug info: {user_id}", "IGNORE")  # not visible
-    log(f"Warning!", "WARN")                 # visible
+    log("Warning!", "WARN")                 # visible
 ```
 
 ## How It Works
 
-1. **Without an environment variable:**
-   - `Run Parallel Scenarios` without `logger_mapper` uses the standard buffer + replay mechanism.
+1. **No mapper configured:** `Run Parallel Scenarios` uses the default
+   logger. Each thread's messages are buffered and replayed in order into
+   `log.html`, filtered by `thread_log_level` and `remove_passing_logs`.
+2. **`logger_mapper` argument:** used if it resolves (a callable or a
+   `module.function` path). It takes priority over the environment variable.
+3. **`ROBOT_LOGGER_MAPPER`:** used when the argument is not given, or when the
+   argument can't be resolved (ParallelRunner logs a warning and falls back).
+4. **Neither resolves:** default logger, with a warning for any value that
+   was given but couldn't be resolved.
 
-2. **With the environment variable:**
-   - `ParallelRunner` detects `ROBOT_LOGGER_MAPPER`.
-   - It looks up the registered mapper or imports the module.
-   - It injects the mapper into every worker thread.
-   - Logs are filtered automatically (sv=0 excluded).
-
-3. **With an explicit parameter:**
-   - The `logger_mapper=...` parameter takes **priority** over the environment variable.
-   - This lets you override the global configuration when needed.
-
-## Full Example
-
-### Project Structure
-
-```
-my_project/
-├── tests/
-│   ├── test_users.robot
-│   └── test_agents.robot
-├── lib/
-│   ├── api_client.py
-│   └── loggers/
-│       ├── __init__.py
-│       └── custom_adapter.py
-└── robot.config
-```
-
-### Adapter Code
-
-```python
-# lib/loggers/custom_adapter.py
-from examples.custom_logger.custom_logging_mapper import register_mapper
-
-def project_logger(msg, level="INFO"):
-    """Custom adapter for my project."""
-    severity_map = {
-        "INFO": 1,
-        "WARN": 2,
-        "ERROR": 3,
-        "IGNORE": 0,
-    }
-    sv = severity_map.get(level, 1)
-
-    if sv == 0:
-        return  # Ignore
-
-    # My own logging system
-    print(f"[PROJECT-{level}] {msg}")
-
-register_mapper("project_logger", project_logger)
-```
-
-### Suite Configuration
-
-```robot
-*** Settings ***
-Library    ParallelRunner
-Library    my_project.lib.api_client.ApiClient
-Suite Setup    Set Environment Variable    ROBOT_LOGGER_MAPPER    project_logger
-
-*** Test Cases ***
-Validate Users Parallel
-    [Documentation]    No need to pass logger_mapper
-    ${users}=    Create List    1    2    3    4    5
-    Run Parallel Scenarios
-    ...    keyword=Validate User
-    ...    library=my_project.lib.api_client.ApiClient
-    ...    for_loop_iterable=${users}
-```
-
-### Running It
-
-```bash
-# Option 1: auto-detected from Suite Setup
-robot --pythonpath . tests/
-
-# Option 2: pass the environment variable
-export ROBOT_LOGGER_MAPPER=project_logger
-robot --pythonpath . tests/
-
-# Option 3: command line
-robot --pythonpath . --variable ROBOT_LOGGER_MAPPER:project_logger tests/
-```
-
-## Benefits
-
-- **One mapper per project** - no need to repeat it on every test
-- **Zero changes to existing suites** - fully backward compatible
-- **Automatic sv=0 filtering** - IGNORE logs never pollute the output
-- **Flexible** - an explicit parameter can override the global setting
-- **Debuggable** - easy to configure and verify
+When a mapper is used, it is injected as `_logger` into every worker thread
+and **its messages go straight to your logging system**: they are not
+buffered or replayed into `log.html`, so `thread_log_level` and
+`remove_passing_logs` don't apply to them. The mapper is called from several
+threads at once, so it must be thread-safe.
 
 ## Debugging
 
-### See which mapper is active
-
-```python
-# In your code
-from examples.custom_logger.custom_logging_mapper import get_global_mapper
-mapper = get_global_mapper()
-print(f"Current mapper: {mapper}")
-```
-
-### Check the mapper registry
-
-```python
-from examples.custom_logger.custom_logging_mapper import _MAPPER_REGISTRY
-print(f"Available mappers: {list(_MAPPER_REGISTRY.keys())}")
-```
-
-### No mapper (default value)
-
-If you don't configure `ROBOT_LOGGER_MAPPER`:
-- `ParallelRunner` uses the standard buffer + replay mechanism.
-- All logs are included.
-- Perfectly valid for projects without a custom logger.
+- **Was my mapper used?** If ParallelRunner can't resolve the value, the log
+  shows a warning such as:
+  `Ignoring ROBOT_LOGGER_MAPPER 'custom_logger_adapter': expected a 'module.function' path such as 'my_package.my_module.my_mapper'.`
+  No warning means the mapper was resolved and used.
+- **Check the path from Python:**
+  ```bash
+  python -c "import examples.custom_logger.custom_logging_mapper as m; print(m.custom_logger_adapter)"
+  ```
+- **Check the variable is really in the environment** (not a `--variable`):
+  `echo $ROBOT_LOGGER_MAPPER` (or `$env:ROBOT_LOGGER_MAPPER` in PowerShell).

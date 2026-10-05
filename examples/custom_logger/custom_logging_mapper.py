@@ -1,20 +1,25 @@
 """
-Custom logging mapper that adapts custom logger format to ParallelRunner's standard format.
-This mapper converts severity numeric codes (sv=0,1,2,3) to standard level strings (INFO, WARN, ERROR).
+Custom logging mapper that adapts a custom logger format to ParallelRunner's standard format.
+This mapper converts standard level strings (INFO, WARN, ERROR, IGNORE) to severity
+numeric codes (sv=1,2,3,0).
 
 Supports:
 1. Local adaptation: _create_local_logger() for use in methods
-2. Global mappers: Custom loggers registered and accessible by name
-3. sv=0 handling: Logs with sv=0 (IGNORE) are filtered out in parallel execution
-4. Environment variables: Set ROBOT_LOGGER_MAPPER to use a mapper globally across all suites
+2. A ready-made mapper for ParallelRunner: custom_logger_adapter
+3. sv=0 handling: logs with level IGNORE (sv=0) are dropped
+
+ParallelRunner resolves a mapper given as a callable or as a full
+`module.function` path, either with the `logger_mapper` argument or the
+ROBOT_LOGGER_MAPPER environment variable, e.g.:
+
+    examples.custom_logger.custom_logging_mapper.custom_logger_adapter
+
+Bare names such as "custom_logger_adapter" are not supported (they are ignored
+with a warning).
 """
 
-import os
 from examples.custom_logger.custom_logger import log_custom_message
-from typing import Callable, Optional, Dict
-
-# Global registry of available mappers
-_MAPPER_REGISTRY: Dict[str, Callable] = {}
+from typing import Callable
 
 
 def _create_local_logger() -> Callable:
@@ -61,10 +66,9 @@ def create_custom_logging_mapper() -> Callable:
         Callable: A mapper function that converts (msg, level) to custom logger format (sv=n).
         Automatically filters sv=0 (IGNORE) logs.
     
-    Example:
+    Example (Python, passing the callable itself):
         mapper = create_custom_logging_mapper()
-        # Use with ParallelRunner:
-        # Run Parallel Scenarios    keyword=...    logger_mapper=${mapper}
+        ParallelRunner().run_parallel_scenarios(..., logger_mapper=mapper)
     """
     
     def map_to_custom_logger(msg: str, level: str = "INFO"):
@@ -95,7 +99,9 @@ def create_custom_logging_mapper() -> Callable:
 def custom_logger_adapter(msg: str, level: str = "INFO"):
     """
     Directly adapts standard level to custom severity logger.
-    Can be passed as logger_mapper to ParallelRunner or set as ROBOT_LOGGER_MAPPER.
+    Pass it to ParallelRunner by its full path, as logger_mapper or as the
+    ROBOT_LOGGER_MAPPER environment variable:
+    examples.custom_logger.custom_logging_mapper.custom_logger_adapter
     
     Automatically filters sv=0 (IGNORE) logs from parallel execution.
     
@@ -115,82 +121,3 @@ def custom_logger_adapter(msg: str, level: str = "INFO"):
         return  # Don't log ignored messages
         
     log_custom_message(msg, sv=sv)
-
-
-def register_mapper(name: str, mapper: Callable) -> None:
-    """
-    Register a custom logger mapper by name for global use.
-    
-    Args:
-        name (str): Name to register the mapper under (e.g., "custom_logger_adapter").
-        mapper (Callable): Mapper function with signature (msg: str, level: str) -> None
-    
-    Example:
-        from examples.custom_logger.custom_logger import custom_logger_adapter
-        register_mapper("my_custom_logger", custom_logger_adapter)
-        
-        # Then in Robot Framework suite setup:
-        # Set Environment Variable    ROBOT_LOGGER_MAPPER    my_custom_logger
-    """
-    _MAPPER_REGISTRY[name] = mapper
-
-
-def get_mapper_by_name(name: str) -> Optional[Callable]:
-    """
-    Retrieve a registered mapper by name.
-    
-    Args:
-        name (str): The name of the registered mapper.
-    
-    Returns:
-        Callable: The mapper function, or None if not found.
-    """
-    return _MAPPER_REGISTRY.get(name)
-
-
-def get_global_mapper() -> Optional[Callable]:
-    """
-    Get the global mapper configured via ROBOT_LOGGER_MAPPER environment variable.
-    
-    Returns:
-        Callable: The mapper function if configured, None otherwise.
-    
-    Environment variable format:
-        - ROBOT_LOGGER_MAPPER=custom_logger_adapter (looks up registered mapper)
-        - ROBOT_LOGGER_MAPPER=module.path.function (imports and uses the function)
-    
-    Example:
-        # In robot suite setup or command line:
-        robot --variable ROBOT_LOGGER_MAPPER:custom_logger_adapter test.robot
-        
-        # Or in suite settings:
-        *** Settings ***
-        Suite Setup    Set Environment Variable    ROBOT_LOGGER_MAPPER    custom_logger_adapter
-    """
-    mapper_name = os.getenv("ROBOT_LOGGER_MAPPER")
-    
-    if not mapper_name:
-        return None
-    
-    # First, check if it's a registered mapper
-    if mapper_name in _MAPPER_REGISTRY:
-        return _MAPPER_REGISTRY[mapper_name]
-    
-    # Try to import it as a module path
-    try:
-        parts = mapper_name.rsplit(".", 1)
-        if len(parts) == 2:
-            module_name, func_name = parts
-            module = __import__(module_name, fromlist=[func_name])
-            mapper = getattr(module, func_name, None)
-            if callable(mapper):
-                return mapper
-    except (ImportError, AttributeError):
-        pass
-    
-    return None
-
-
-# Register the built-in mapper on module load
-register_mapper("custom_logger_adapter", custom_logger_adapter)
-register_mapper("create_custom_logging_mapper", create_custom_logging_mapper())

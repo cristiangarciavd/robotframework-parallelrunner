@@ -1,5 +1,6 @@
 import os
 import concurrent.futures
+import importlib
 from typing import Iterable, Any, List, Dict, Optional, Tuple, Union
 from robot.api import logger
 from robot.libraries.BuiltIn import BuiltIn
@@ -94,11 +95,31 @@ class ParallelRunner:
     or use ``return_values_only=True`` / `Get Result Values`, which fail
     if any call failed.
 
+    = Custom logger mappers =
+
+    A logger mapper replaces the default buffering logger: the target keyword
+    receives it as ``_logger`` and every message goes straight to your own
+    logging system. Use it when a project already has its own log format
+    (severity codes, JSON...).
+
+    - Give it as a callable or as a ``module.function`` path, either with the
+      ``logger_mapper`` argument or, for a project-wide default, with the
+      ``ROBOT_LOGGER_MAPPER`` environment variable. The argument wins.
+    - Bare names (without a module path) are not supported. A value that
+      can't be resolved is ignored with a warning in the log.
+    - Mapper messages are *not* buffered and replayed into ``log.html``, so
+      ``thread_log_level`` and ``remove_passing_logs`` don't apply to them.
+      The mapper is called from several threads at once, so it must be
+      thread-safe.
+    - ``ROBOT_LOGGER_MAPPER`` must be a real environment variable (e.g. set
+      with ``Set Environment Variable`` or in the shell); a Robot variable
+      given with ``--variable`` is not read.
+
     = Environment variables =
 
     | =Variable=             | =Description= |
     | ROBOT_THREAD_WORKERS   | Number of worker threads. Read when the library is imported. Default ``4``. |
-    | ROBOT_LOGGER_MAPPER    | Default ``logger_mapper`` as a ``module.function`` path, used when the argument is not given. |
+    | ROBOT_LOGGER_MAPPER    | Default ``logger_mapper`` as a ``module.function`` path, used when the argument is not given. See `Custom logger mappers`. |
 
     = When not to use it =
 
@@ -147,10 +168,12 @@ class ParallelRunner:
         - ``thread_log_level``: Minimum level replayed from the threads:
           ``INFO`` (default), ``WARN`` or ``ERROR``.
         - ``logger_mapper``: Optional callable ``mapper(msg, level)`` - or a
-          ``module.function`` path to one - injected as ``_logger`` instead of
-          the default buffering logger, to route logs to a custom logging
+          ``module.function`` path to one, such as
+          ``my_package.my_module.my_mapper`` - injected as ``_logger`` instead
+          of the default buffering logger, to route logs to a custom logging
           system. Falls back to the ``ROBOT_LOGGER_MAPPER`` environment
-          variable.
+          variable. A value that can't be resolved (e.g. a bare name without a
+          module) is ignored with a warning. See `Custom logger mappers`.
         - ``return_values_only``: If true, return a plain tuple of each call's
           return value (in call order) instead of the result dictionaries.
           Fails with ``ParallelTaskError`` if any call failed. Same as calling
@@ -229,52 +252,57 @@ class ParallelRunner:
             raise ParallelTaskError(failures, len(results))
         return tuple(entry["result"] for entry in results)
 
-    def _resolve_mapper(self, mapper: Optional[Any]) -> Optional[Any]:
+    def _resolve_mapper(self, mapper: Optional[Any], source: str = "logger_mapper") -> Optional[Any]:
         """
-        Resolve a mapper which might be a callable or a string path to a module function.
-        
+        Resolve a mapper given as a callable or as a ``module.function`` path
+        (e.g. "examples.custom_logger.custom_logging_mapper.custom_logger_adapter").
+
+        Returns the callable, or None when no mapper was given. A mapper that
+        was given but can't be resolved (a bare name without a module, a module
+        that can't be imported, a missing or non-callable attribute) is ignored
+        with a warning in the log - it used to be ignored silently, which hid
+        typos and unsupported values such as bare registered names.
+
         Args:
-            mapper: Callable or string path (e.g., "examples.custom_logger.custom_logging_mapper.custom_logger_adapter")
-        
-        Returns:
-            Callable: The mapper function if successfully resolved, None otherwise.
+            mapper: Callable, ``module.function`` string, or None / empty string.
+            source: Where the value came from, used in the warning message.
         """
-        if mapper is None:
+        if mapper is None or (isinstance(mapper, str) and not mapper.strip()):
             return None
-        
-        # If already callable, return it
+
         if callable(mapper):
             return mapper
-        
-        # If it's a string, try to import it
+
         if isinstance(mapper, str):
-            try:
-                parts = mapper.rsplit(".", 1)
-                if len(parts) == 2:
-                    module_name, func_name = parts
-                    module = __import__(module_name, fromlist=[func_name])
+            module_name, _, func_name = mapper.strip().rpartition(".")
+            if not module_name:
+                reason = "expected a 'module.function' path such as 'my_package.my_module.my_mapper'"
+            else:
+                try:
+                    module = importlib.import_module(module_name)
+                except ImportError as error:
+                    reason = f"cannot import module '{module_name}' ({error})"
+                else:
                     resolved = getattr(module, func_name, None)
                     if callable(resolved):
                         return resolved
-            except (ImportError, AttributeError):
-                pass
-        
+                    reason = f"module '{module_name}' has no callable '{func_name}'"
+        else:
+            reason = f"expected a callable or a 'module.function' string, got {type(mapper).__name__}"
+
+        logger.warn(f"Ignoring {source} {mapper!r}: {reason}.")
         return None
 
     def _load_mapper_from_environment(self) -> Optional[Any]:
         """
-        Load custom logger mapper from ROBOT_LOGGER_MAPPER environment variable.
-        Supports both registered mapper names and module.function paths.
-        
+        Load the logger mapper named by the ROBOT_LOGGER_MAPPER environment
+        variable, which must be a ``module.function`` path (bare names are not
+        supported and are ignored with a warning).
+
         Returns:
             Callable: The mapper function if found, None otherwise.
         """
-        mapper_name = os.getenv("ROBOT_LOGGER_MAPPER")
-        if not mapper_name:
-            return None
-        
-        # Use _resolve_mapper to handle the string path
-        return self._resolve_mapper(mapper_name)
+        return self._resolve_mapper(os.getenv("ROBOT_LOGGER_MAPPER"), source="ROBOT_LOGGER_MAPPER")
 
     def _get_library_instance_owning_keyword(self, keyword_name: str, library: str) -> Any:
         method_name = keyword_name.replace(" ", "_").lower()

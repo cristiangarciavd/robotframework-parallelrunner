@@ -145,7 +145,7 @@ pabot --processes 4 --pythonpath . atest/
 pabot --processes 4 --testlevelsplit --pythonpath . atest/
 ```
 
-Both commands pass the full acceptance suite of this repository (36 tests;
+Both commands pass the full acceptance suite of this repository (41 tests;
 checked with pabot 5.2.2).
 
 How much time each one saves, from the offline

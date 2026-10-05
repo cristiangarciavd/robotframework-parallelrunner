@@ -48,7 +48,9 @@ ParallelRunner/
 │   ├── test_repeat.robot               # `repeat` usage: data setup, fixed-endpoint calls
 │   ├── test_return_values.robot        # Result ordering guarantees, `return_values_only`, `Get Result Values`
 │   ├── test_custom_logger.robot        # Tests with an explicit custom logger adapter
-│   └── test_custom_logger_with_env.robot  # Same, via ROBOT_LOGGER_MAPPER env var
+│   ├── test_custom_logger_with_env.robot  # Same, via ROBOT_LOGGER_MAPPER env var
+│   ├── test_logger_mapper.robot        # Which logger is really used (mapper vs default), offline
+│   └── resources/MapperProbe.py        # Test helper: recording mapper + logging keyword
 │
 ├── utest/                     # pytest unit tests (no Robot execution context needed)
 ├── docs/                      # User docs + generated keyword docs (ParallelRunner.html, GitHub Pages)
@@ -182,7 +184,7 @@ Custom Logger Integration
     ...    keyword=Validate With Custom Logger
     ...    library=examples.custom_logger.custom_logger_api_client.CustomLoggerApiClient
     ...    for_loop_iterable=${items}
-    ...    logger_mapper=custom_logger_adapter
+    ...    logger_mapper=examples.custom_logger.custom_logging_mapper.custom_logger_adapter
 ```
 
 ## Adapting to Other Projects
@@ -226,14 +228,18 @@ def map_to_my_logger(msg, level="INFO"):
     log_custom(msg, severity=severity_map.get(level, 1))
 ```
 
-Then pass it:
+Then pass it by its full `module.function` path (bare names like
+`map_to_my_logger` are ignored with a warning). The mapper's messages go
+straight to your logger instead of being buffered and replayed into
+`log.html`, and it is called from several threads at once, so keep it
+thread-safe:
 
 ```robot
 Run Parallel Scenarios    
     ...    keyword=Process Item
     ...    library=my_library.my_client.MyClient
     ...    for_loop_iterable=${items}
-    ...    logger_mapper=map_to_my_logger
+    ...    logger_mapper=my_library.custom_mapper.map_to_my_logger
 ```
 
 ## Performance Considerations
@@ -276,9 +282,10 @@ Python's GIL (Global Interpreter Lock) limits CPU-bound parallelization. For hea
 
 ## Testing Coverage
 
-Acceptance tests: **36 test cases** across 6 Robot Framework suites in `atest/`.
-Unit tests: **15 pytest tests** in `utest/` (ordering, item selection, failure
-capture, log replay filtering, mapper resolution, deprecated import path).
+Acceptance tests: **41 test cases** across 7 Robot Framework suites in `atest/`.
+Unit tests: **28 pytest tests** in `utest/` (ordering, item selection, failure
+capture, log replay filtering, mapper resolution and warnings, deprecated
+import path).
 
 | Suite | Cases | Coverage |
 |-------|-------|----------|
@@ -288,6 +295,7 @@ capture, log replay filtering, mapper resolution, deprecated import path).
 | test_return_values.robot | 7 | Call-order guarantees (`repeat` and `for_loop_iterable`), `return_values_only` (success and `ParallelTaskError` on failure), standalone `Get Result Values` |
 | test_custom_logger.robot | 5 | Custom logger adapter integration, passed explicitly |
 | test_custom_logger_with_env.robot | 6 | Same, configured via `ROBOT_LOGGER_MAPPER` env var |
+| test_logger_mapper.robot | 5 | Which logger is actually used: explicit/env mapper paths receive the messages; bare or unresolvable names are ignored and logs stay buffered; fallback from an invalid argument to the env var. Offline |
 
 Run all tests (after `poetry install`):
 
@@ -350,6 +358,11 @@ poetry run robot --pythonpath . atest/test_custom_logger.robot
 - Check `thread_log_level` setting (default "INFO")
 - Verify `remove_passing_logs` is not set to True
 - Ensure methods use `_logger` parameter
+- If a logger mapper is configured, its messages go to your own logging
+  system, not to `log.html`. If the log shows `Ignoring logger_mapper ...` or
+  `Ignoring ROBOT_LOGGER_MAPPER ...`, the value couldn't be resolved: use a
+  full `module.function` path, and set `ROBOT_LOGGER_MAPPER` as a real
+  environment variable (not with `--variable`)
 
 ## Future Enhancements
 

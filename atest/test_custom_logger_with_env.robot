@@ -2,7 +2,12 @@
 Library    OperatingSystem
 Library    ParallelRunner
 Library    examples.custom_logger.custom_logger_api_client.CustomLoggerApiClient
-Suite Setup    Set Environment Variable    ROBOT_LOGGER_MAPPER    custom_logger_adapter
+# ROBOT_LOGGER_MAPPER must be a `module.function` path: a bare name such as
+# `custom_logger_adapter` is ignored (with a warning) and the default buffered
+# logger is used instead. That used to be silent, so this suite passed while
+# never using the mapper; test_logger_mapper.robot now checks which logger is used.
+Suite Setup       Set Environment Variable    ROBOT_LOGGER_MAPPER    examples.custom_logger.custom_logging_mapper.custom_logger_adapter
+Suite Teardown    Remove Environment Variable    ROBOT_LOGGER_MAPPER
 
 *** Variables ***
 ${custom_logger_lib}    examples.custom_logger.custom_logger_api_client.CustomLoggerApiClient

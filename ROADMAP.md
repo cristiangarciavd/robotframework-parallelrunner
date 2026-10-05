@@ -23,7 +23,7 @@ could reasonably be added next.
 **Custom logger support**
 - `_create_local_logger()` for local adaptation inside existing methods
 - `ROBOT_LOGGER_MAPPER` environment variable for global configuration
-- Named mapper registration (`register_mapper` / `get_global_mapper`)
+  (`module.function` paths; unresolvable values are ignored with a warning)
 - Full worked example with `CustomLoggerApiClient`
 
 **Packaging and distribution**
@@ -55,15 +55,17 @@ could reasonably be added next.
 - `CODE_OF_CONDUCT.md` (Contributor Covenant)
 
 **Tests**
-- 36 Robot Framework test cases across 6 suites under `atest/`, all passing,
+- 41 Robot Framework test cases across 7 suites under `atest/`, all passing,
   including a dedicated `test_repeat.robot` covering the `repeat` parameter
   (parallel data setup, repeated calls to a fixed endpoint, precedence vs.
   `for_loop_iterable`, the no-argument default, `return_values_only`, and the
   `repeat=0` regression) and `test_return_values.robot` (call-order
   guarantees, `return_values_only`, `Get Result Values`, and
-  `ParallelTaskError` on failure)
-- 15 pytest unit tests under `utest/` (ordering, item selection, failure
-  capture, log replay filtering, mapper resolution, deprecated import path)
+  `ParallelTaskError` on failure), plus `test_logger_mapper.robot`
+  (which logger is really used: mapper vs default buffered logger)
+- 28 pytest unit tests under `utest/` (ordering, item selection, failure
+  capture, log replay filtering, mapper resolution and warnings, deprecated
+  import path)
 
 **CI**
 - `.github/workflows/tests.yml`: installs with Poetry and runs the unit and
@@ -91,6 +93,9 @@ These are possible directions, not commitments. Contributions welcome — see
 - **Process-based execution mode** for CPU-bound workloads, as an opt-in alternative
   to the current thread-based model (would need its own log-buffering strategy,
   since data can't be shared across processes the same way).
+- **Named logger mappers**: a small registry so `ROBOT_LOGGER_MAPPER` could
+  take a short name instead of a full `module.function` path (today bare
+  names are ignored with a warning).
 - **Type-checked mapper contracts** (e.g. a `Protocol` for `logger_mapper`) to catch
   malformed adapters earlier.
 - **Linting/formatting in CI** (ruff/black) and optionally pre-commit hooks.

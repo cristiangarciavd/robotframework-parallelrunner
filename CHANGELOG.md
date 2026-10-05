@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   simulated I/O) and the `invoke demo-pabot` task, which times robot vs
   pabot, with and without ParallelRunner, and prints a table.
 - `robotframework-pabot` as a development dependency (used by the demo only).
+- `atest/test_logger_mapper.robot` (offline) and new unit tests that check
+  which logger is really used: a resolvable mapper receives the messages, an
+  unresolvable one is ignored with a warning and logs stay buffered.
+- Library documentation section "Custom logger mappers".
 
 ### Changed
 - README "Summary of Benefits" and ARCHITECTURE "Performance
@@ -26,7 +30,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tasks.py`, Poetry, release workflow).
 - `.gitignore`: pabot artifacts (`.pabotsuitenames`, `pabot_results/`).
 
+### Removed
+- `register_mapper`, `get_mapper_by_name` and `get_global_mapper` from
+  `examples/custom_logger/custom_logging_mapper.py`. ParallelRunner never
+  consulted that registry, so it only taught a pattern that didn't work.
+  (Example code only; not part of the installed package.)
+
 ### Fixed
+- **A logger mapper that can't be resolved is no longer ignored silently.**
+  `logger_mapper` and `ROBOT_LOGGER_MAPPER` only accept a callable or a full
+  `module.function` path; anything else (for example a bare name such as
+  `custom_logger_adapter`, a module that can't be imported, or a missing
+  function) used to fall back to the default logger without any message. It
+  now logs a warning saying why, e.g. `Ignoring ROBOT_LOGGER_MAPPER
+  'custom_logger_adapter': expected a 'module.function' path ...`. Behavior is
+  otherwise unchanged: the default buffered logger (or, for an invalid
+  argument, `ROBOT_LOGGER_MAPPER`) is still used. Empty values are treated as
+  "not given".
+- Documentation claimed `ROBOT_LOGGER_MAPPER` accepted names registered with
+  the example's `register_mapper`, and suggested `robot --variable
+  ROBOT_LOGGER_MAPPER:...`; neither ever worked (ParallelRunner only resolves
+  `module.function` paths and reads a real environment variable). Fixed in
+  the API reference, ARCHITECTURE and `examples/custom_logger/ENVIRONMENT_SETUP.md`.
+- `atest/test_custom_logger_with_env.robot` set a bare name, so its 6 tests
+  passed without ever using the mapper. It now uses the full path and removes
+  the variable in a Suite Teardown so it can't leak into later suites.
 - `tasks.py`: every invoke task now runs tools with the interpreter invoke
   itself runs under (`sys.executable`) instead of the first `python` on the
   PATH. A plain `invoke atest` (without `poetry run` or an activated
