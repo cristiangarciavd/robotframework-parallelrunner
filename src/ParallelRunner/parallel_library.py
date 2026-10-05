@@ -4,12 +4,14 @@ from typing import Iterable, Any, List, Dict, Optional, Tuple, Union
 from robot.api import logger
 from robot.libraries.BuiltIn import BuiltIn
 
+from .version import __version__
+
 
 class ParallelTaskError(RuntimeError):
     """
     Raised when at least one parallel task failed and there is no meaningful
-    return value to hand back for it - by `get_result_values`, and by
-    `run_parallel_scenarios` when called with `return_values_only=True`.
+    return value to hand back for it - by ``get_result_values``, and by
+    ``run_parallel_scenarios`` when called with ``return_values_only=True``.
 
     Silently substituting `None` for a failed task's value would let a test
     keep going with bad data instead of failing for the right reason, so
@@ -26,12 +28,88 @@ class ParallelTaskError(RuntimeError):
         super().__init__(f"{len(failures)} of {total} parallel task(s) failed: {detail}")
 
 
-class ParallelLibrary:
+class ParallelRunner:
     """
-    Library to run Robot Framework keywords/Python functions in parallel
-    using ThreadPoolExecutor while preserving log integrity.
+    ParallelRunner runs a keyword many times *inside a single test case*,
+    concurrently on a thread pool, and still produces one clean, ordered
+    ``log.html``.
+
+    Typical uses: validate 100 API endpoints in one test, or repeat one
+    call N times (seed N fixture rows, a light concurrent load check) -
+    I/O-bound work where most of the time is spent waiting on the network
+    or a database.
+
+    = Table of contents =
+
+    %TOC%
+
+    = How it works =
+
+    - Each call runs on a worker thread of a ``ThreadPoolExecutor``.
+      ``BuiltIn().run_keyword`` is *not* used inside threads (it is not
+      thread-safe); the underlying Python method of the target library is
+      called directly instead.
+    - Every thread buffers its log messages in memory. When all tasks have
+      finished, the logs are replayed sequentially into the real Robot
+      Framework logger, grouped per item and in call order - so concurrent
+      work never interleaves or corrupts ``log.html``.
+    - Results come back in *call order*, not completion order: entry ``i``
+      always belongs to the ``i``-th item / repetition.
+
+    = Writing a parallel-ready keyword =
+
+    The target keyword must be a method of a Python library that is already
+    imported in the suite. It receives the current item (or the repeat
+    index) as its first argument and an injected ``_logger`` callable that
+    it should use instead of ``robot.api.logger``:
+
+    | from robot.api import logger
+    |
+    | class MyLibrary:
+    |     def verify_agent(self, agent_id, _logger=None, **kwargs):
+    |         log = _logger or (lambda msg, level="INFO": logger.write(msg, level))
+    |         log(f"Checking agent {agent_id}")
+    |         ...
+    |         return result
+
+    ``_logger(msg, level)`` accepts the levels ``INFO``, ``WARN``, ``ERROR``
+    and ``IGNORE`` (dropped). Any extra named argument given to
+    `Run Parallel Scenarios` is forwarded to every call as ``**kwargs``.
+
+    Logging is made thread-safe for you; your keyword's own side effects are
+    not. Protect shared state (files, shared objects) with a lock.
+
+    = Result format =
+
+    `Run Parallel Scenarios` returns a list with one dictionary per call:
+
+    | =Key=    | =Description= |
+    | status   | ``PASS`` or ``FAIL``. |
+    | item     | The item (or repeat index) the call received. |
+    | logs     | List of ``(level, message)`` tuples captured during the call. |
+    | result   | The return value of the call (only when ``status`` is ``PASS``). |
+    | error    | The error message (only when ``status`` is ``FAIL``). |
+
+    A failing call does *not* fail the keyword; check ``status`` yourself,
+    or use ``return_values_only=True`` / `Get Result Values`, which fail
+    if any call failed.
+
+    = Environment variables =
+
+    | =Variable=             | =Description= |
+    | ROBOT_THREAD_WORKERS   | Number of worker threads. Read when the library is imported. Default ``4``. |
+    | ROBOT_LOGGER_MAPPER    | Default ``logger_mapper`` as a ``module.function`` path, used when the argument is not given. |
+
+    = When not to use it =
+
+    - CPU-bound work: threads share Python's GIL. Use
+      [https://github.com/mkorpela/pabot|pabot] or ``multiprocessing``.
+    - Running many independent suites/tests faster: that is what pabot is
+      for. Both tools compose well together.
     """
     ROBOT_LIBRARY_SCOPE = 'GLOBAL'
+    ROBOT_LIBRARY_VERSION = __version__
+    ROBOT_LIBRARY_DOC_FORMAT = 'ROBOT'
 
     def __init__(self):
         # Workers count from Env Var or default to 4
@@ -49,35 +127,45 @@ class ParallelLibrary:
         return_values_only: bool = False,
         **kwargs
     ) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]:
-        """
-        Runs a keyword in parallel.
-        - If for_loop_iterable is provided, it acts like a parallel FOR loop.
-        - If repeat is provided, it runs the same keyword N times.
-        - If remove_passing_logs is True, only logs warnings/errors for failed tasks, skipping successful ones.
-        - library: Library name where the keyword is defined. Required.
-        - thread_log_level: Minimum log level to replay ("INFO", "WARN", "ERROR"). Default "INFO".
-        - logger_mapper: Optional custom logger function to map standard levels to custom logging format.
-          Signature: mapper(msg: str, level: str).
-          Can be a callable or a string path to a module function (e.g., "examples.custom_logger.custom_logging_mapper.custom_logger_adapter").
-          If not provided, will attempt to load from ROBOT_LOGGER_MAPPER environment variable.
-        - return_values_only: If True, return a plain tuple of each call's return
-          value - in call order - instead of the list of result dictionaries.
-          Raises ParallelTaskError if any task failed. Handy with `repeat`, since
-          it lets you unpack each run's result straight into its own variable,
-          e.g. `${id1}    ${id2}    ${id3}=    Run Parallel Scenarios    ...    repeat=3    return_values_only=True`.
-          Equivalent to calling `get_result_values()` on the default return value.
+        """Runs ``keyword`` from ``library`` concurrently, once per item or N times.
 
-        Results are returned in call order: entry `i` corresponds to
-        `for_loop_iterable[i]`, or to repeat index `i` - not to
-        `concurrent.futures.as_completed` completion order. All tasks still run
-        concurrently; only the order in which results are collected is affected,
-        so `results[i]` (or `return_values_only` tuple index `i`) is always the
-        i-th call, regardless of which thread happened to finish first.
+        Arguments:
+        - ``keyword``: Name of the keyword to run, e.g. ``Verify Agent Data``.
+          It must be implemented as a Python method of ``library`` (see
+          `Writing a parallel-ready keyword`).
+        - ``library``: Name of the library that owns the keyword, exactly as
+          it was imported in the suite (e.g. ``my_package.MyLibrary``).
+        - ``for_loop_iterable``: Items to iterate over, like a parallel FOR
+          loop. Each call receives one item as its first argument. Takes
+          precedence over ``repeat``.
+        - ``repeat``: Run the keyword this many times; each call receives its
+          repeat index (``0`` .. ``N-1``). ``repeat=0`` runs it zero times.
+          If neither ``for_loop_iterable`` nor ``repeat`` is given, the
+          keyword runs once.
+        - ``remove_passing_logs``: If true, logs of passing calls are not
+          replayed into ``log.html``; only failed calls are shown.
+        - ``thread_log_level``: Minimum level replayed from the threads:
+          ``INFO`` (default), ``WARN`` or ``ERROR``.
+        - ``logger_mapper``: Optional callable ``mapper(msg, level)`` - or a
+          ``module.function`` path to one - injected as ``_logger`` instead of
+          the default buffering logger, to route logs to a custom logging
+          system. Falls back to the ``ROBOT_LOGGER_MAPPER`` environment
+          variable.
+        - ``return_values_only``: If true, return a plain tuple of each call's
+          return value (in call order) instead of the result dictionaries.
+          Fails with ``ParallelTaskError`` if any call failed. Same as calling
+          `Get Result Values` on the default return value.
+        - ``**kwargs``: Any other named argument is passed to every call.
 
-        Environment variables:
-        - ROBOT_THREAD_WORKERS: Number of parallel worker threads (default: 4)
-        - ROBOT_LOGGER_MAPPER: Global logger mapper name or module path (default: None)
-          Example: ROBOT_LOGGER_MAPPER=custom_logger_adapter
+        Returns a list of result dictionaries (see `Result format`), in call
+        order: entry ``i`` belongs to ``for_loop_iterable[i]`` / repeat
+        index ``i``, regardless of which thread finished first.
+
+        Examples:
+        | ${agents}=    | Create List            | 1                         | 2                       | 3 |
+        | ${results}=   | Run Parallel Scenarios | keyword=Verify Agent Data | library=MyLibrary       | for_loop_iterable=${agents} |
+        | ${results}=   | Run Parallel Scenarios | keyword=Check Health      | library=MyLibrary       | repeat=8 | agent_id=1 |
+        | ${id1}    ${id2}    ${id3}= | Run Parallel Scenarios | keyword=Seed Record | library=MyLibrary | repeat=3 | return_values_only=True |
         """
         # Determine items to process. NOTE: `repeat or 1` would be wrong here -
         # 0 is falsy in Python, so an explicit repeat=0 would silently fall
@@ -120,26 +208,21 @@ class ParallelLibrary:
         return results
 
     def get_result_values(self, results: List[Dict[str, Any]]) -> Tuple[Any, ...]:
-        """
-        Extract each task's return value from a `run_parallel_scenarios` result
-        list, preserving order (`results[i]` -> returned tuple index `i`).
+        """Returns the return value of every call in ``results``, as a tuple in call order.
 
-        Useful once the full status/item/logs envelope of each entry isn't
-        needed anymore - only the return values themselves. Typical use: after
-        a `repeat` run, unpack each independent result straight into its own
-        variable, e.g.:
+        ``results`` is the list returned by `Run Parallel Scenarios`.
+        ``results[i]`` becomes tuple index ``i``.
 
-            ${results}=    Run Parallel Scenarios    keyword=Seed Fixture Record    library=${lib}    repeat=3
-            ${id1}    ${id2}    ${id3}=    Get Result Values    ${results}
+        Passing ``return_values_only=True`` to `Run Parallel Scenarios` does
+        the same in one step; use this keyword when you want to inspect the
+        full results first (e.g. assert on ``status`` or ``logs``).
 
-        Passing `return_values_only=True` directly to `run_parallel_scenarios`
-        does the same thing in one step; use this standalone form when you want
-        to inspect the full result list first (e.g. assert on `status` or
-        `logs`) before extracting the values.
+        Fails with ``ParallelTaskError`` if any entry has status ``FAIL`` -
+        a failed call has no return value to put in its slot.
 
-        Raises ParallelTaskError if any entry has `status == "FAIL"` - a failed
-        task has no return value, so there is nothing correct to put in its
-        slot in the tuple.
+        Example:
+        | ${results}=                 | Run Parallel Scenarios | keyword=Seed Record | library=MyLibrary | repeat=3 |
+        | ${id1}    ${id2}    ${id3}= | Get Result Values      | ${results}          |
         """
         failures = [entry for entry in results if entry.get("status") == "FAIL"]
         if failures:
@@ -238,3 +321,7 @@ class ParallelLibrary:
                 elif level == "WARN": logger.warn(msg)
                 elif level == "ERROR": logger.error(msg)
             logger.info(f"Status: {entry['status']}")
+
+# Backwards-compatible name: the class was called ParallelLibrary before the
+# package was renamed to ParallelRunner (imported as `Library    ParallelRunner`).
+ParallelLibrary = ParallelRunner

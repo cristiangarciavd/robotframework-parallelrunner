@@ -6,8 +6,11 @@ then writing your own minimal parallel test case.
 ## 1. Install
 
 ```bash
-pip install -e ".[dev]"
+pip install robotframework-parallelrunner
 ```
+
+To run the bundled example suites, work from a clone of the repository
+instead (`poetry install`, see [INSTALLATION.md](INSTALLATION.md#development-install-from-source)).
 
 See [INSTALLATION.md](INSTALLATION.md) for details.
 
@@ -15,12 +18,12 @@ See [INSTALLATION.md](INSTALLATION.md) for details.
 
 The repository ships a small example API client
 (`examples/api_client/api_client.py`) and a matching test suite
-(`tests/robot/test_api.robot`) that hits a public test API
+(`atest/test_api.robot`) that hits a public test API
 (`jsonplaceholder.typicode.com`) for a handful of fake "agent" IDs, both
 sequentially and in parallel:
 
 ```bash
-robot --pythonpath . --outputdir robot_results tests/robot/test_api.robot
+robot --pythonpath . --outputdir robot_results atest/test_api.robot
 ```
 
 Open `robot_results/log.html` and compare the `Verify Agents In Parallel`
@@ -51,7 +54,7 @@ Then a Robot Framework suite that parallelizes calls to it:
 
 ```robot
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    my_project.my_client.MyClient
 
 *** Test Cases ***
@@ -105,4 +108,4 @@ result list before deciding whether to extract the values.
 - [API_REFERENCE.md](API_REFERENCE.md) - full parameter reference for `Run Parallel Scenarios`.
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) - how the log buffering/replay mechanism works internally.
 - `examples/custom_logger/` - adapting a project that already has its own custom/severity-based logger.
-- `tests/robot/` - more worked examples (warnings, errors, log-level filtering, custom loggers).
+- `atest/` - more worked examples (warnings, errors, log-level filtering, custom loggers).

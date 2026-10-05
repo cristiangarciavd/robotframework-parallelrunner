@@ -140,7 +140,7 @@ def validate_user(self, user_id: str, _logger=None, **kwargs):
    - `Run Parallel Scenarios` without `logger_mapper` uses the standard buffer + replay mechanism.
 
 2. **With the environment variable:**
-   - `ParallelLibrary` detects `ROBOT_LOGGER_MAPPER`.
+   - `ParallelRunner` detects `ROBOT_LOGGER_MAPPER`.
    - It looks up the registered mapper or imports the module.
    - It injects the mapper into every worker thread.
    - Logs are filtered automatically (sv=0 excluded).
@@ -195,7 +195,7 @@ register_mapper("project_logger", project_logger)
 
 ```robot
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    my_project.lib.api_client.ApiClient
 Suite Setup    Set Environment Variable    ROBOT_LOGGER_MAPPER    project_logger
 
@@ -252,6 +252,6 @@ print(f"Available mappers: {list(_MAPPER_REGISTRY.keys())}")
 ### No mapper (default value)
 
 If you don't configure `ROBOT_LOGGER_MAPPER`:
-- `ParallelLibrary` uses the standard buffer + replay mechanism.
+- `ParallelRunner` uses the standard buffer + replay mechanism.
 - All logs are included.
 - Perfectly valid for projects without a custom logger.

@@ -126,7 +126,7 @@ Process In Parallel
 Run the example tests to see this pattern in action:
 
 ```bash
-robot --pythonpath . tests/robot/test_custom_logger.robot
+robot --pythonpath . atest/test_custom_logger.robot
 ```
 
 ## Why This Approach

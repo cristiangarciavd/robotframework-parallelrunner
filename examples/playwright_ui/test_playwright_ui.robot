@@ -1,5 +1,5 @@
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    examples.playwright_ui.ui_client.UiClient
 
 *** Variables ***

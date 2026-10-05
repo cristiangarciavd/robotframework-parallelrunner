@@ -9,9 +9,11 @@
 ```
 ParallelRunner/
 ├── src/
-│   └── parallelrunner/        # Core parallelization library (the installable package)
-│       ├── __init__.py        # Exposes __version__ and ParallelLibrary
-│       └── parallel_library.py   # Main ParallelLibrary implementation
+│   ├── ParallelRunner/        # Core library (the installable package) -> `Library    ParallelRunner`
+│   │   ├── __init__.py        # Exposes ParallelRunner, ParallelTaskError, __version__
+│   │   ├── parallel_library.py   # ParallelRunner implementation (+ ParallelLibrary alias)
+│   │   └── version.py         # Reads the version from the installed package metadata
+│   └── parallelrunner.py      # Deprecated shim for the old `parallelrunner.parallel_library` path
 │
 ├── examples/                  # Example "business logic" libraries, not part of the package
 │   ├── api_client/
@@ -31,29 +33,32 @@ ParallelRunner/
 │   │
 │   └── playwright_ui/         # OPTIONAL: UI automation example (not in `dev` extras or CI)
 │       ├── ui_client.py       # Playwright sync_api, one browser per call (thread-safe)
-│       ├── test_playwright_ui.robot   # Lives here, not under tests/robot/, on purpose
+│       ├── test_playwright_ui.robot   # Lives here, not under atest/, on purpose
 │       └── README.md          # Opt-in install/run instructions
 │
-├── tests/
-│   └── robot/                          # Robot Framework acceptance suites
-│       ├── test_api.robot              # Happy path tests (sequential & parallel)
-│       ├── test_api_negative.robot     # Tests with warnings/errors
-│       ├── test_repeat.robot           # `repeat` usage: data setup, fixed-endpoint calls
-│       ├── test_return_values.robot    # Result ordering guarantees, `return_values_only`, `Get Result Values`
-│       ├── test_custom_logger.robot    # Tests with an explicit custom logger adapter
-│       └── test_custom_logger_with_env.robot  # Same, via ROBOT_LOGGER_MAPPER env var
+├── atest/                              # Robot Framework acceptance suites
+│   ├── test_api.robot                  # Happy path tests (sequential & parallel)
+│   ├── test_api_negative.robot         # Tests with warnings/errors
+│   ├── test_repeat.robot               # `repeat` usage: data setup, fixed-endpoint calls
+│   ├── test_return_values.robot        # Result ordering guarantees, `return_values_only`, `Get Result Values`
+│   ├── test_custom_logger.robot        # Tests with an explicit custom logger adapter
+│   └── test_custom_logger_with_env.robot  # Same, via ROBOT_LOGGER_MAPPER env var
 │
-├── docs/                      # User-facing documentation
-├── pyproject.toml             # Packaging metadata (installable via pip)
-└── README.md                  # Project documentation
+├── utest/                     # pytest unit tests (no Robot execution context needed)
+├── docs/                      # User docs + generated keyword docs (ParallelRunner.html, GitHub Pages)
+├── .github/workflows/         # tests.yml (CI), publish.yml (PyPI release via Trusted Publishing)
+├── pyproject.toml             # Poetry project / packaging metadata
+├── poetry.lock                # Locked dev environment
+├── tasks.py                   # invoke tasks: utest, atest, tests, coverage, libdoc, build
+└── README.md                  # Project documentation (also the PyPI project page)
 ```
 
-`parallelrunner` is the only directory that ships as the installed package (`pip install robotframework-parallelrunner`). Everything under `examples/` and `tests/` is developer-facing sample code and acceptance tests that consume the installed library.
+`src/` (the `ParallelRunner` package plus the `parallelrunner.py` shim) is the only thing that ships as the installed package (`pip install robotframework-parallelrunner`). Everything under `examples/`, `atest/` and `utest/` is developer-facing sample code and acceptance tests that consume the installed library.
 
 ## Architecture Principles
 
 ### 1. **Separation of Concerns**
-- **ParallelLibrary**: Handles parallelization and thread-safe logging only
+- **ParallelRunner**: Handles parallelization and thread-safe logging only
 - **Business Logic**: Implemented in separate libraries (e.g., TestAPI, CustomLoggerApiClient)
 - **Test Suites**: Contain only test cases, not logic
 
@@ -192,7 +197,7 @@ class MyClient:
 
 ```robot
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    my_library.my_client.MyClient
 
 *** Test Cases ***
@@ -235,7 +240,7 @@ Set number of workers via environment variable:
 # Default 4 workers
 export ROBOT_THREAD_WORKERS=8
 
-robot --pythonpath . tests/robot/
+robot --pythonpath . atest/
 ```
 
 ### Scalability
@@ -274,13 +279,13 @@ Total: **36 test cases** across 6 test suites
 Run all tests:
 
 ```bash
-robot --pythonpath . tests/robot/
+robot --pythonpath . atest/
 ```
 
 Run specific suite:
 
 ```bash
-robot --pythonpath . tests/robot/test_custom_logger.robot
+robot --pythonpath . atest/test_custom_logger.robot
 ```
 
 ## Best Practices
@@ -338,7 +343,7 @@ MIT. See [LICENSE](LICENSE).
 ## Support
 
 For questions or issues, refer to:
-- `src/parallelrunner/`: Core implementation
+- `src/ParallelRunner/`: Core implementation
 - `examples/custom_logger/`: Custom logger integration examples
-- `tests/robot/`: Test examples
+- `atest/`: Test examples
 - `docs/`: User-facing documentation

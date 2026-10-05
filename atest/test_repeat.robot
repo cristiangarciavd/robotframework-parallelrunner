@@ -1,5 +1,5 @@
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    examples.api_client.api_client.ApiClient
 
 *** Variables ***
@@ -81,7 +81,7 @@ Repeat With Return Values Only Unpacks Each Record Directly
     ...    unpacked straight into its own variable instead of digging through a
     ...    list of result dictionaries. Results are guaranteed to be in call order
     ...    (repeat index 0, 1, 2, ...), not completion order, so `record1` here is
-    ...    always the index-0 call. See tests/robot/test_return_values.robot for
+    ...    always the index-0 call. See atest/test_return_values.robot for
     ...    the full ordering/failure guarantees and the standalone
     ...    `Get Result Values` keyword.
     ${record1}    ${record2}    ${record3}=    Run Parallel Scenarios

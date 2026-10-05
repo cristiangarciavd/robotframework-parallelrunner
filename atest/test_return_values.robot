@@ -3,7 +3,7 @@ Documentation     Result ordering guarantees, plus the `return_values_only` para
 ...               and the standalone `Get Result Values` keyword for extracting plain
 ...               return values out of a `repeat` / `for_loop_iterable` run.
 Library    Collections
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    examples.api_client.api_client.ApiClient
 Library    examples.db_seed.db_seed_client.DbSeedClient
 Suite Setup    Initialize Schema

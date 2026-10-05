@@ -1,58 +1,65 @@
 # ParallelRunner
 
+[![PyPI](https://img.shields.io/pypi/v/robotframework-parallelrunner)](https://pypi.org/project/robotframework-parallelrunner/)
+[![Python versions](https://img.shields.io/pypi/pyversions/robotframework-parallelrunner)](https://pypi.org/project/robotframework-parallelrunner/)
+[![Tests](https://github.com/cristiangarciavd/robotframework-parallelrunner/actions/workflows/tests.yml/badge.svg)](https://github.com/cristiangarciavd/robotframework-parallelrunner/actions/workflows/tests.yml)
+
 **Run a loop inside a single Robot Framework test case in parallel — with one clean `log.html`, not a merge of many.**
 
-`parallelrunner` (packaged as `robotframework-parallelrunner`) is a small
-Robot Framework library that lets you fan a keyword or Python method out
-across a thread pool from *within* a test case — e.g. hit 100 API endpoints,
-or repeat one check N times — and get back a single, correctly ordered
-`log.html` plus a structured list of per-item results.
+ParallelRunner is a small Robot Framework library that lets you fan a
+keyword out across a thread pool from *within* a test case — e.g. hit 100
+API endpoints, or repeat one check N times — and get back a single,
+correctly ordered `log.html` plus a structured list of per-item results.
+
+**Keyword documentation:** <https://cristiangarciavd.github.io/robotframework-parallelrunner/ParallelRunner.html>
 
 ## Installation
-
-Not yet published to PyPI. Install from a local clone in editable mode:
-
-```bash
-git clone <this-repository-url>
-cd ParallelRunner
-pip install -e .
-```
-
-Once published, the intended install method will be:
 
 ```bash
 pip install robotframework-parallelrunner
 ```
 
-See [docs/INSTALLATION.md](docs/INSTALLATION.md) for details, including how
-to install dev/test dependencies and build a local wheel.
+Requires Python 3.9+ and Robot Framework 5.0+ (installed automatically).
+See [docs/INSTALLATION.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/docs/INSTALLATION.md) for development installs
+and upgrading from the pre-release import path.
 
 ## Quickstart
 
+The keyword you want to parallelize is a method of a Python library. It
+receives the current item first, and an injected `_logger` it should log
+through (so logs from different threads never interleave):
+
+```python
+# my_library.py
+class MyLibrary:
+    def verify_agent_data(self, agent_id, _logger=None, **kwargs):
+        _logger(f"Checking agent {agent_id}")
+        ...
+        return result
+```
+
 ```robot
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
-Library    examples.api_client.api_client.ApiClient
+Library    ParallelRunner
+Library    my_library.MyLibrary
 
 *** Test Cases ***
 Verify Agents In Parallel
     ${agents}=    Create List    1    2    3    4    5
-    Run Parallel Scenarios
+    ${results}=    Run Parallel Scenarios
     ...    keyword=Verify Agent Data
-    ...    library=examples.api_client.api_client.ApiClient
+    ...    library=my_library.MyLibrary
     ...    for_loop_iterable=${agents}
 ```
 
-Run it:
-
 ```bash
-robot --pythonpath . tests/robot/test_api.robot
+robot --pythonpath . my_suite.robot
 ```
 
-See [docs/QUICKSTART.md](docs/QUICKSTART.md) for a full walkthrough with your
-own library, and [docs/API_REFERENCE.md](docs/API_REFERENCE.md) for the
-complete parameter reference of `Run Parallel Scenarios`. For the internal
-design (log buffering, thread safety), see [ARCHITECTURE.md](ARCHITECTURE.md).
+See [docs/QUICKSTART.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/docs/QUICKSTART.md) for a full walkthrough and
+[docs/API_REFERENCE.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/docs/API_REFERENCE.md) for every parameter of
+`Run Parallel Scenarios`. For the internal design (log buffering, thread
+safety), see [ARCHITECTURE.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/ARCHITECTURE.md).
 
 ## Why This Works
 
@@ -133,7 +140,7 @@ and I want a single readable log instead of 100 sequential HTTP round trips
   writes to a shared variable, file, or object without a lock, running it
   concurrently can race the same way any multi-threaded code can.
 - **You need per-item retries or a timeout.** Not implemented yet (see
-  [ROADMAP.md](ROADMAP.md)) — one hung call currently blocks the whole batch
+  [ROADMAP.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/ROADMAP.md)) — one hung call currently blocks the whole batch
   from returning.
 - **You need process-level isolation** (a crash in one call shouldn't be
   able to affect another) or cross-machine parallelism — that's pabot's
@@ -143,30 +150,30 @@ and I want a single readable log instead of 100 sequential HTTP round trips
 
 ```
 ParallelRunner/
-├── src/parallelrunner/     # The installable library (core, do not depend on internals prefixed with `_`)
+├── src/ParallelRunner/     # The installable library (core, do not depend on internals prefixed with `_`)
 ├── examples/               # Example "business logic" libraries used by the test suites
-├── tests/robot/            # Robot Framework acceptance suites
+├── atest/            # Robot Framework acceptance suites
 ├── docs/                   # INSTALLATION, QUICKSTART, API_REFERENCE
 └── ARCHITECTURE.md         # Technical deep dive
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full breakdown and design
+See [ARCHITECTURE.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/ARCHITECTURE.md) for the full breakdown and design
 principles.
 
 ### Optional: UI automation with Playwright
 
 The same thread-pool approach applies to browser automation, not just HTTP
-calls — see [examples/playwright_ui/](examples/playwright_ui/) for a
+calls — see [examples/playwright_ui/](https://github.com/cristiangarciavd/robotframework-parallelrunner/tree/main/examples/playwright_ui/) for a
 worked example using Playwright's official `sync_api`. It's kept out of
 the default install and CI (heavy dependency, real browser download), so
 it's opt-in: read that folder's README before installing anything.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-For what's done and what's planned, see [ROADMAP.md](ROADMAP.md) and
-[CHANGELOG.md](CHANGELOG.md).
+See [CONTRIBUTING.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/CODE_OF_CONDUCT.md).
+For what's done and what's planned, see [ROADMAP.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/ROADMAP.md) and
+[CHANGELOG.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/CHANGELOG.md).
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/LICENSE).

@@ -9,10 +9,10 @@ third-party wrapper.
 
 - It pulls in a heavy dependency: the `playwright` pip package plus a
   downloaded Chromium binary (`playwright install chromium`, ~150 MB+).
-- It is **not** included in `pip install -e ".[dev]"`, and it is **not**
+- It is **not** included in `poetry install`, and it is **not**
   run by `.github/workflows/tests.yml` or the documented
-  `robot --pythonpath . tests/robot/` command - this suite lives at
-  `examples/playwright_ui/test_playwright_ui.robot`, outside `tests/robot/`,
+  `robot --pythonpath . atest/` command - this suite lives at
+  `examples/playwright_ui/test_playwright_ui.robot`, outside `atest/`,
   precisely so it is never swept up by the default test run.
 - You opt in deliberately, on your own machine, when you actually want to
   try it.
@@ -31,7 +31,8 @@ values that make sense for API calls.
 ## Install
 
 ```bash
-pip install -e ".[playwright-example]"
+poetry install --extras playwright-example
+# or, with plain pip: pip install -e ".[playwright-example]"
 playwright install chromium
 ```
 

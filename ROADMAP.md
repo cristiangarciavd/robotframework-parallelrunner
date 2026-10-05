@@ -4,12 +4,12 @@ This document tracks the project's maturity: what is already in place, and what
 could reasonably be added next. It replaces the old (Spanish-language,
 session-scoped) `IMPROVEMENT_PLAN.md`.
 
-## Current Status (as of the 0.1.0 restructure)
+## Current Status (as of 0.2.0)
 
 ### Done
 
 **Core functionality**
-- `ParallelLibrary` with `ThreadPoolExecutor`-based execution
+- `ParallelRunner` with `ThreadPoolExecutor`-based execution
 - Thread-safe logging via buffer + sequential replay (`_execute_and_capture` / `_replay_logs`)
 - Support for `for_loop_iterable` and `repeat`
 - Log filtering by level (`thread_log_level`)
@@ -28,8 +28,13 @@ session-scoped) `IMPROVEMENT_PLAN.md`.
 - Full worked example with `CustomLoggerApiClient`
 
 **Packaging and distribution**
-- `src/` layout with the installable package at `src/parallelrunner/`
-- `pyproject.toml` (PEP 621), installable via `pip install -e .`
+- `src/` layout with the installable package at `src/ParallelRunner/`
+- `pyproject.toml` (PEP 621, built with Poetry), published as
+  `robotframework-parallelrunner` and imported as `Library    ParallelRunner`
+- Keyword documentation generated with libdoc (`invoke libdoc`) and served
+  from GitHub Pages
+- pytest unit tests (`utest/`) alongside the Robot acceptance suites (`atest/`)
+- Release workflow publishing to TestPyPI and PyPI via Trusted Publishing
 - `py.typed` marker (PEP 561) so type checkers respect the package's inline
   type hints once installed
 - MIT `LICENSE`
@@ -47,7 +52,7 @@ session-scoped) `IMPROVEMENT_PLAN.md`.
 - `CODE_OF_CONDUCT.md` (Contributor Covenant)
 
 **Tests**
-- 36 Robot Framework test cases across 6 suites under `tests/robot/`, all passing,
+- 36 Robot Framework test cases across 6 suites under `atest/`, all passing,
   including a dedicated `test_repeat.robot` covering the `repeat` parameter
   (parallel data setup, repeated calls to a fixed endpoint, precedence vs.
   `for_loop_iterable`, the no-argument default, `return_values_only`, and the

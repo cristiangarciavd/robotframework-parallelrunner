@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-04
+
+First release published to PyPI.
+
 ### Added
 - `return_values_only` parameter on `Run Parallel Scenarios`: when `True`,
   returns a plain `tuple` of each call's return value (in call order)
@@ -37,18 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   service routes once each (a post-deployment smoke test across
   microservices), contrasted with `check_endpoint_health`'s "hit the same
   fixed endpoint N times" (`repeat`) shape.
-- `tests/robot/test_return_values.robot`: 7 new test cases covering result
+- `atest/test_return_values.robot`: 7 new test cases covering result
   ordering guarantees (for both `repeat` and `for_loop_iterable`),
   `return_values_only` (success and `ParallelTaskError` on failure), and the
   standalone `Get Result Values` keyword.
-- `tests/robot/test_repeat.robot`: 1 new test case pairing `repeat` with
+- `atest/test_repeat.robot`: 1 new test case pairing `repeat` with
   `return_values_only`.
 - `examples/playwright_ui/`: optional, opt-in example demonstrating UI
   automation with Playwright's official `sync_api`. Not part of the `dev`
   extra or CI — install separately via `pip install -e ".[playwright-example]"`
   plus `playwright install chromium`; see that folder's README. Verified
   working locally (1/1 test passing).
-- `tests/robot/test_repeat.robot`: 4 new test cases covering the `repeat`
+- `atest/test_repeat.robot`: 4 new test cases covering the `repeat`
   parameter, previously undocumented by example — parallel test-data
   creation, repeated calls against a fixed endpoint, precedence of
   `for_loop_iterable` over `repeat` when both are given, and the
@@ -56,7 +60,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ApiClient.create_test_record` and `ApiClient.check_endpoint_health` in
   `examples/api_client/api_client.py`, backing the new test suite.
 
+### Added (packaging)
+- `utest/`: pytest unit tests covering ordering, `repeat`/`for_loop_iterable`
+  selection, failure capture, log replay filtering, mapper resolution and the
+  deprecated import path - runnable without a Robot execution context.
+- `tasks.py` with invoke tasks: `utest`, `atest`, `tests`, `coverage`,
+  `libdoc`, `build`.
+- `.github/workflows/publish.yml`: on a published GitHub Release, runs the
+  tests, builds, and publishes to TestPyPI and then PyPI using Trusted
+  Publishing (no API tokens). Release steps are documented in CONTRIBUTING.md.
+- Python 3.13 classifier.
+
 ### Changed
+- **Import name is now `Library    ParallelRunner`** (Python: `from ParallelRunner
+  import ParallelRunner`), following the Robot Framework convention of a
+  `robotframework-<name>` distribution exposing a `<Name>` library. The class
+  `ParallelLibrary` was renamed `ParallelRunner`. The old
+  `parallelrunner.parallel_library.ParallelLibrary` path and the
+  `ParallelLibrary` name keep working as deprecated aliases (a
+  `DeprecationWarning` is emitted).
+- Packaging migrated from setuptools to Poetry (`poetry-core` build backend).
+  The version is defined only in `pyproject.toml`; `__version__` and
+  `ROBOT_LIBRARY_VERSION` read it from the installed package metadata.
+- Keyword and library docstrings rewritten in Robot Framework documentation
+  format; keyword documentation is generated with libdoc into
+  `docs/ParallelRunner.html` (served via GitHub Pages).
+- Acceptance tests moved from `tests/robot/` to `atest/`.
+- README links are absolute so they work on the PyPI project page; project
+  URLs point to `github.com/cristiangarciavd/robotframework-parallelrunner`.
+- CI installs with Poetry, runs unit and acceptance tests on Python 3.9, 3.11
+  and 3.13, and checks that the keyword documentation builds.
 - `Run Parallel Scenarios` now returns per-task results in **call order**
   (`results[i]` matches `for_loop_iterable[i]`, or repeat index `i`) instead
   of `concurrent.futures.as_completed` completion order. Concurrency is
@@ -108,7 +141,7 @@ public behavior of `run_parallel_scenarios`.
   (`pip install -e .`, `python -m build`).
 - `examples/` directory containing the demo API client and custom-logger
   adapter libraries, moved out of the installable package.
-- `tests/robot/` directory containing the Robot Framework acceptance suites.
+- `atest/` directory containing the Robot Framework acceptance suites.
 - `docs/INSTALLATION.md`, `docs/QUICKSTART.md`, `docs/API_REFERENCE.md`.
 - `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md`.
 - `ROADMAP.md`, replacing the old ad-hoc, Spanish-language `IMPROVEMENT_PLAN.md`.
@@ -122,7 +155,7 @@ public behavior of `run_parallel_scenarios`.
   (logic unchanged).
 - Moved `TestAPI/` to `examples/api_client/`.
 - Moved `CustomLogger/` to `examples/custom_logger/`.
-- Moved `TestExample/*.robot` to `tests/robot/`.
+- Moved `TestExample/*.robot` to `atest/`.
 - Updated all `Library` statements in `.robot` files and all documentation to
   reference the new module paths (`parallelrunner.parallel_library.ParallelLibrary`,
   `examples.api_client.api_client.ApiClient`,

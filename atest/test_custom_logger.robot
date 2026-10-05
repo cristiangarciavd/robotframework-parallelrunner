@@ -1,5 +1,5 @@
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    examples.custom_logger.custom_logger_api_client.CustomLoggerApiClient
 
 *** Variables ***

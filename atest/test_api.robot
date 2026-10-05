@@ -1,5 +1,5 @@
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    examples.api_client.api_client.ApiClient
 
 

@@ -5,70 +5,102 @@
 - Python >= 3.9
 - [Robot Framework](https://robotframework.org/) >= 5.0 (installed automatically as a dependency)
 
-## Install from source (current recommended method)
-
-This project is not yet published to PyPI, so install it directly from a
-local clone in editable mode:
-
-```bash
-git clone <this-repository-url>
-cd ParallelRunner
-pip install -e .
-```
-
-Editable installs mean changes to `src/parallelrunner/` take effect
-immediately, without reinstalling.
-
-To also install the tools needed to run the test suites and build the
-package (`robotframework`, `build`, `requests` used by the example API
-client):
-
-```bash
-pip install -e ".[dev]"
-```
-
-## Verify the install
-
-```bash
-python -c "from parallelrunner.parallel_library import ParallelLibrary; print('OK')"
-```
-
-## Future: install from PyPI
-
-Once this project is published, it will be installable as:
+## Install from PyPI
 
 ```bash
 pip install robotframework-parallelrunner
 ```
 
-(This does not work yet — there is no published release. Track progress in
-[CHANGELOG.md](../CHANGELOG.md) and [ROADMAP.md](../ROADMAP.md).)
+Upgrade to the latest release:
+
+```bash
+pip install --upgrade robotframework-parallelrunner
+```
+
+Then import it in a suite:
+
+```robot
+*** Settings ***
+Library    ParallelRunner
+```
+
+Keyword documentation:
+<https://cristiangarciavd.github.io/robotframework-parallelrunner/ParallelRunner.html>
+
+## Verify the install
+
+```bash
+python -c "import ParallelRunner; print(ParallelRunner.__version__)"
+python -m robot.libdoc ParallelRunner list
+```
+
+## Upgrading from the pre-release import path
+
+Before 0.2.0 the library was imported as
+`parallelrunner.parallel_library.ParallelLibrary`. That path still works but
+emits a `DeprecationWarning` and will be removed in a future release. Replace:
+
+```robot
+Library    parallelrunner.parallel_library.ParallelLibrary
+```
+
+with:
+
+```robot
+Library    ParallelRunner
+```
+
+In Python, `from ParallelRunner import ParallelRunner` (the old class name
+`ParallelLibrary` is kept as an alias).
+
+## Development install (from source)
+
+The project uses [Poetry](https://python-poetry.org/) (2.x) for dependency
+management and packaging:
+
+```bash
+git clone https://github.com/cristiangarciavd/robotframework-parallelrunner.git
+cd robotframework-parallelrunner
+poetry install
+```
+
+This creates a virtual environment with the library installed in editable
+mode, plus the dev tools (`pytest`, `coverage`, `invoke`, and `requests`
+for the example API client). Prefix commands with `poetry run`, or activate
+the environment with `poetry env activate`.
+
+Without Poetry, plain pip also works for an editable install of the library
+itself (the dev tools then need to be installed by hand):
+
+```bash
+pip install -e .
+pip install pytest coverage invoke requests
+```
 
 ## Building a distribution locally
 
 ```bash
-pip install build
-python -m build
+poetry build
 ```
 
-This produces a wheel and sdist under `dist/`, which you can install with
-`pip install dist/robotframework_parallelrunner-*.whl` to sanity-check
-packaging without a registry.
+This produces a wheel and an sdist under `dist/`. Install the wheel into a
+fresh virtual environment with `pip install dist/robotframework_parallelrunner-*.whl`
+to sanity-check packaging without a registry.
 
-## Running the example test suites
-
-After installing the package, run the bundled acceptance tests (they use
-`examples/` as example "business logic" libraries, so it must be on
-`--pythonpath`):
+## Running the tests
 
 ```bash
-robot --pythonpath . --outputdir robot_results tests/robot/
+poetry run invoke tests    # unit (utest/) + acceptance (atest/) tests
+poetry run invoke utest    # pytest only
+poetry run invoke atest    # Robot Framework suites only
 ```
 
-See [QUICKSTART.md](QUICKSTART.md) for a walkthrough.
+The acceptance suites use `examples/` as "business logic" libraries, so the
+repository root must be on `--pythonpath` (the `atest` task does that). See
+[QUICKSTART.md](QUICKSTART.md) for a walkthrough.
 
 ## Optional: UI automation example (Playwright)
 
-Not installed by `.[dev]` and not run by the test command above. See
+Not installed by default and not run by the commands above. See
 [examples/playwright_ui/README.md](../examples/playwright_ui/README.md) if
 you want to try it — it requires its own extra plus a browser download.

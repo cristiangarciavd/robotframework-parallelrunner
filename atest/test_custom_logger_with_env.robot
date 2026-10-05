@@ -1,6 +1,6 @@
 *** Settings ***
 Library    OperatingSystem
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    examples.custom_logger.custom_logger_api_client.CustomLoggerApiClient
 Suite Setup    Set Environment Variable    ROBOT_LOGGER_MAPPER    custom_logger_adapter
 

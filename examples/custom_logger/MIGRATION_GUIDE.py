@@ -88,7 +88,7 @@ class MyAdaptedClient:
 # Parallel execution (new capability)
 """
 *** Robot Framework ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    your_project.my_client.MyAdaptedClient
 
 *** Test Cases ***

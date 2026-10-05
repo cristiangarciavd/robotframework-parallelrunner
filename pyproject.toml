@@ -1,23 +1,16 @@
 [build-system]
-# >=77.0.1 is a hard requirement, not a preference: that's the exact setuptools
-# version that added support for `license = "MIT"` (PEP 639 SPDX string form)
-# below. Anything older raises "invalid pyproject.toml config: `project.license`"
-# at build time - confirmed via bisection (76.1.0 rejects it, 77.0.1 accepts it).
-requires = ["setuptools>=77.0.1"]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "robotframework-parallelrunner"
-version = "0.1.0"
-description = "Thread-based parallel execution of a keyword/method inside a single Robot Framework test case, with clean log.html output."
+# Single source of truth for the version: bump with `poetry version patch|minor|major`.
+# ParallelRunner.__version__ / ROBOT_LIBRARY_VERSION read it back from the installed metadata.
+version = "0.2.0"
+description = "Run a keyword in parallel inside a single Robot Framework test case, with one clean, ordered log.html."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-# setuptools >=77.0.1 is required to build this project (see [build-system]
-# above), and setuptools dropped Python 3.8 support at 76.0.0 - so 3.8 cannot
-# satisfy both constraints at once. Confirmed by reproducing the install
-# failure in a clean python:3.8-slim container; python:3.9-slim installs and
-# passes the full test suite cleanly. See notes/PUBLISHING_GUIDE.md.
 requires-python = ">=3.9"
 authors = [
     { name = "Cristian Garcia", email = "cristian.garcia.vd@gmail.com" },
@@ -41,6 +34,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Testing",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -50,25 +44,35 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "robotframework",
-    "build",
-    "requests",
-]
-# Optional, opt-in only: powers examples/playwright_ui/, not part of `dev` or CI.
+# Optional, opt-in only: powers examples/playwright_ui/, not part of CI.
 # See examples/playwright_ui/README.md - also run `playwright install chromium` after installing.
 playwright-example = [
     "playwright>=1.40",
 ]
 
 [project.urls]
-Homepage = "https://github.com/cristiangarcia/robotframework-parallelrunner"
-Documentation = "https://github.com/cristiangarcia/robotframework-parallelrunner/tree/main/docs"
-Repository = "https://github.com/cristiangarcia/robotframework-parallelrunner"
-Changelog = "https://github.com/cristiangarcia/robotframework-parallelrunner/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/cristiangarciavd/robotframework-parallelrunner"
+Documentation = "https://cristiangarciavd.github.io/robotframework-parallelrunner/ParallelRunner.html"
+Repository = "https://github.com/cristiangarciavd/robotframework-parallelrunner"
+Issues = "https://github.com/cristiangarciavd/robotframework-parallelrunner/issues"
+Changelog = "https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/CHANGELOG.md"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.poetry]
+# Distribution name (pip install robotframework-parallelrunner) differs from
+# the import name (Library    ParallelRunner), so the packages are listed explicitly.
+# `parallelrunner` is a deprecated single-file shim for the old import path.
+packages = [
+    { include = "ParallelRunner", from = "src" },
+    { include = "parallelrunner.py", from = "src" },
+]
 
-[tool.setuptools.package-data]
-parallelrunner = ["py.typed"]
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0"
+coverage = ">=7.0"
+invoke = ">=2.0"
+# Used by the example libraries the acceptance tests run against (examples/).
+requests = ">=2.25"
+
+[tool.pytest.ini_options]
+testpaths = ["utest"]
+pythonpath = ["src", "."]

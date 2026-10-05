@@ -1,13 +1,13 @@
 # API Reference
 
 This page documents the public Robot Framework keyword exposed by
-`parallelrunner.parallel_library.ParallelLibrary`, pulled directly from the
-implementation in `src/parallelrunner/parallel_library.py`.
+`ParallelRunner`, pulled directly from the
+implementation in `src/ParallelRunner/parallel_library.py`.
 
-## `ParallelLibrary`
+## `ParallelRunner`
 
 ```python
-from parallelrunner.parallel_library import ParallelLibrary
+from ParallelRunner import ParallelRunner
 ```
 
 - `ROBOT_LIBRARY_SCOPE = 'GLOBAL'`
@@ -19,7 +19,7 @@ As a Robot Framework library:
 
 ```robot
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 ```
 
 ## `Run Parallel Scenarios`
@@ -52,7 +52,7 @@ never gets corrupted by concurrent writes.
 | `keyword` | `str` | Yes | - | Name of the method to call, Robot-keyword style (e.g. `Validate Agents Data With Steps`). It is converted internally to a Python method name via `.replace(" ", "_").lower()`, so it must resolve to an actual method on the target library instance. |
 | `library` | `str` | Yes | - | Full dotted path to the Robot Framework library instance that owns `keyword`, exactly as it was imported in `*** Settings ***` (e.g. `examples.api_client.api_client.ApiClient`). Resolved via `BuiltIn().get_library_instance(library)`. |
 | `for_loop_iterable` | `Iterable[Any]` or `None` | No | `None` | Items to process, one task per item. If provided, this takes precedence and each item is passed as the first positional argument to `keyword`. |
-| `repeat` | `int` or `None` | No | `None` | If `for_loop_iterable` is not given, run the keyword this many times instead (`range(repeat)`); the loop index is passed as the first positional argument. An explicit `repeat=0` runs zero times (an empty result list), same as passing `for_loop_iterable=${EMPTY_LIST}` — it is not treated as "not given". If `repeat` itself is not given (`None`) and neither is `for_loop_iterable`, the keyword runs exactly once (`range(1)`). Use this when there's no pre-existing list of items — e.g. creating N independent test records in parallel, or firing N concurrent calls at one fixed endpoint — see `tests/robot/test_repeat.robot` for worked examples of both. |
+| `repeat` | `int` or `None` | No | `None` | If `for_loop_iterable` is not given, run the keyword this many times instead (`range(repeat)`); the loop index is passed as the first positional argument. An explicit `repeat=0` runs zero times (an empty result list), same as passing `for_loop_iterable=${EMPTY_LIST}` — it is not treated as "not given". If `repeat` itself is not given (`None`) and neither is `for_loop_iterable`, the keyword runs exactly once (`range(1)`). Use this when there's no pre-existing list of items — e.g. creating N independent test records in parallel, or firing N concurrent calls at one fixed endpoint — see `atest/test_repeat.robot` for worked examples of both. |
 | `remove_passing_logs` | `bool` | No | `False` | When `True`, only the log block for tasks with `status == "FAIL"` is replayed; passing tasks are skipped entirely (their result is still returned). |
 | `thread_log_level` | `str` | No | `"INFO"` | Minimum level to replay: one of `"INFO"`, `"WARN"`, `"ERROR"`. Uses the ordering `INFO(1) < WARN(2) < ERROR(3)`; messages below the threshold are dropped. `"IGNORE"`-level messages are always dropped regardless of this setting. |
 | `logger_mapper` | callable, `str`, or `None` | No | `None` | Custom logger adapter with signature `mapper(msg: str, level: str) -> None`. May be passed as a callable, or as a string module path (`"package.module.function"`) which is imported dynamically. If omitted, the library falls back to the `ROBOT_LOGGER_MAPPER` environment variable (see below). If neither is set, logs are captured internally and replayed through `robot.api.logger`. |
@@ -85,7 +85,7 @@ value, in the same call order described above. Raises `ParallelTaskError`
 
 | Variable | Effect |
 |---|---|
-| `ROBOT_THREAD_WORKERS` | Number of worker threads used by the internal `ThreadPoolExecutor`. Default: `4`. Read once, at `ParallelLibrary.__init__`. |
+| `ROBOT_THREAD_WORKERS` | Number of worker threads used by the internal `ThreadPoolExecutor`. Default: `4`. Read once, at `ParallelRunner.__init__`. |
 | `ROBOT_LOGGER_MAPPER` | Global default for `logger_mapper` when the parameter is not passed explicitly. Accepts either a name registered via a mapper registry (see `examples/custom_logger/custom_logging_mapper.py::register_mapper`) or a dotted `module.function` path. An explicit `logger_mapper` argument always takes precedence over this variable. |
 
 ### Method contract for `keyword`
@@ -100,7 +100,7 @@ def method_name(self, item, _logger: Optional[Callable] = None, **kwargs):
 ```
 
 - The first positional argument receives the current item (or repeat index).
-- `_logger` is injected automatically by `ParallelLibrary` — inside a worker
+- `_logger` is injected automatically by `ParallelRunner` — inside a worker
   thread it is never `None`. Methods should still guard for direct
   (non-parallel) invocation by falling back to a default logger.
 - Do **not** call `BuiltIn().run_keyword(...)` from inside the target method —
@@ -133,7 +133,7 @@ Raises `ParallelTaskError` if any entry in `results` has `status == "FAIL"`.
 ## `ParallelTaskError`
 
 ```python
-from parallelrunner import ParallelTaskError
+from ParallelRunner import ParallelTaskError
 ```
 
 Raised by `Get Result Values` and by `Run Parallel Scenarios` (when called
@@ -165,7 +165,7 @@ API, but documented here for maintainers:
 
 ```robot
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    examples.api_client.api_client.ApiClient
 
 *** Test Cases ***
@@ -181,11 +181,11 @@ Verify Agents In Parallel
 
 Seeding N independent fixture rows with `repeat`, and getting each row's
 generated id back directly via `return_values_only` (see
-`examples/db_seed/db_seed_client.py` and `tests/robot/test_return_values.robot`):
+`examples/db_seed/db_seed_client.py` and `atest/test_return_values.robot`):
 
 ```robot
 *** Settings ***
-Library    parallelrunner.parallel_library.ParallelLibrary
+Library    ParallelRunner
 Library    examples.db_seed.db_seed_client.DbSeedClient
 Suite Setup    Initialize Schema
 
@@ -216,5 +216,5 @@ Smoke Test Routes After Deploy
     END
 ```
 
-See `tests/robot/` for further worked examples, including custom logger
+See `atest/` for further worked examples, including custom logger
 adapters and `ROBOT_LOGGER_MAPPER` usage.
