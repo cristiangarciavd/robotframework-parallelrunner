@@ -31,7 +31,13 @@ ParallelRunner/
 │   │   ├── __init__.py
 │   │   └── db_seed_client.py  # Flagship `repeat` + `return_values_only` use case
 │   │
-│   └── playwright_ui/         # OPTIONAL: UI automation example (not in `dev` extras or CI)
+│   ├── pabot_demo/            # Offline timing demo: robot vs pabot, with/without ParallelRunner
+│   │   ├── demo_client.py     # Simulated I/O (1 s sleep per item), no network
+│   │   ├── demo.resource      # Shared keyword; MODE=sequential|parallel
+│   │   ├── suites/            # 4 identical suites (run by `invoke demo-pabot`, not by CI)
+│   │   └── README.md          # How to run it and measured results
+│   │
+│   └── playwright_ui/         # OPTIONAL: UI automation example (not installed by default, not in CI)
 │       ├── ui_client.py       # Playwright sync_api, one browser per call (thread-safe)
 │       ├── test_playwright_ui.robot   # Lives here, not under atest/, on purpose
 │       └── README.md          # Opt-in install/run instructions
@@ -49,7 +55,7 @@ ParallelRunner/
 ├── .github/workflows/         # tests.yml (CI), publish.yml (PyPI release via Trusted Publishing)
 ├── pyproject.toml             # Poetry project / packaging metadata
 ├── poetry.lock                # Locked dev environment
-├── tasks.py                   # invoke tasks: utest, atest, tests, coverage, libdoc, build
+├── tasks.py                   # invoke tasks: utest, atest, tests, coverage, libdoc, demo-pabot, build
 └── README.md                  # Project documentation (also the PyPI project page)
 ```
 
@@ -240,7 +246,7 @@ Set number of workers via environment variable:
 # Default 4 workers
 export ROBOT_THREAD_WORKERS=8
 
-robot --pythonpath . atest/
+poetry run robot --pythonpath . atest/
 ```
 
 ### Scalability
@@ -251,10 +257,15 @@ robot --pythonpath . atest/
 
 ### Network/IO Bound
 
-For network requests (API calls), parallelization provides significant speedup. With 5 items at 1s each:
-- Sequential: ~5s
-- Parallel (4 workers): ~2s
-- Parallel (10 workers): ~1s
+For network requests (API calls), parallelization provides significant speedup.
+Measured on this repository's examples (2026-10-04):
+
+- `atest/test_api.robot` (9 HTTP calls, each with a 1 s simulated delay):
+  13.0 s sequential, 4.7 s with 4 workers, 2.0 s with 9 workers.
+- `examples/pabot_demo` (4 suites × 8 items × 1 s, offline): 32.7 s
+  sequential, 4.6 s with ParallelRunner (8 workers), 10.6 s with pabot
+  (4 processes), 3.5 s with both. See the README section "Using It Together
+  With pabot".
 
 ### CPU Bound
 
@@ -265,7 +276,9 @@ Python's GIL (Global Interpreter Lock) limits CPU-bound parallelization. For hea
 
 ## Testing Coverage
 
-Total: **36 test cases** across 6 test suites
+Acceptance tests: **36 test cases** across 6 Robot Framework suites in `atest/`.
+Unit tests: **15 pytest tests** in `utest/` (ordering, item selection, failure
+capture, log replay filtering, mapper resolution, deprecated import path).
 
 | Suite | Cases | Coverage |
 |-------|-------|----------|
@@ -276,16 +289,16 @@ Total: **36 test cases** across 6 test suites
 | test_custom_logger.robot | 5 | Custom logger adapter integration, passed explicitly |
 | test_custom_logger_with_env.robot | 6 | Same, configured via `ROBOT_LOGGER_MAPPER` env var |
 
-Run all tests:
+Run all tests (after `poetry install`):
 
 ```bash
-robot --pythonpath . atest/
+poetry run invoke tests
 ```
 
-Run specific suite:
+Run a specific suite:
 
 ```bash
-robot --pythonpath . atest/test_custom_logger.robot
+poetry run robot --pythonpath . atest/test_custom_logger.robot
 ```
 
 ## Best Practices
@@ -326,6 +339,12 @@ robot --pythonpath . atest/test_custom_logger.robot
 ### "Keyword 'X' not found in library"
 - Verify method name exists and matches (converted to snake_case)
 - Check method signature includes `_logger` parameter
+
+### "No keyword with name 'Run Parallel Scenarios' found" under pabot
+- pabot starts whichever `robot` is first on the `PATH`. Run pabot from the
+  virtual environment where the library is installed (or `poetry run pabot`),
+  or pass the interpreter explicitly:
+  `pabot --command python -m robot --end-command ...`
 
 ### Logs not appearing
 - Check `thread_log_level` setting (default "INFO")

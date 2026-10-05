@@ -35,6 +35,7 @@ poetry run invoke tests       # unit + acceptance tests
 poetry run invoke utest       # pytest unit tests in utest/
 poetry run invoke atest       # Robot Framework acceptance suites in atest/
 poetry run invoke coverage    # both, under coverage, with an HTML report
+poetry run invoke demo-pabot  # timing demo: robot vs pabot, with/without ParallelRunner (~1 min)
 ```
 
 All tests should pass before you open a pull request. Some acceptance tests

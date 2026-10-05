@@ -37,3 +37,7 @@ Thumbs.db
 .coverage
 .coverage.*
 htmlcov/
+
+# pabot
+.pabotsuitenames
+pabot_results/

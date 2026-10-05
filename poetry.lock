@@ -581,11 +581,29 @@ version = "7.5"
 description = "Generic automation framework for acceptance testing and robotic process automation (RPA)"
 optional = false
 python-versions = ">=3.8"
-groups = ["main"]
+groups = ["main", "dev"]
 files = [
     {file = "robotframework-7.5-py3-none-any.whl", hash = "sha256:5a194db36524604fafa1da89adebc837db9a95adf15ffd746e09ce98251e6c68"},
     {file = "robotframework-7.5.tar.gz", hash = "sha256:ff6233ff752a200ece4d0a6c59f6f9f7d0e96dcff0a7a3458296b997b812482e"},
 ]
+
+[[package]]
+name = "robotframework-pabot"
+version = "5.2.2"
+description = "Parallel test runner for Robot Framework"
+optional = false
+python-versions = ">=3.6"
+groups = ["dev"]
+files = [
+    {file = "robotframework_pabot-5.2.2-py3-none-any.whl", hash = "sha256:e7b95d031e9f04b77312b04a1fd835b9791f022b3436b63b507a720bfec05bb4"},
+    {file = "robotframework_pabot-5.2.2.tar.gz", hash = "sha256:497c3d72551c76eda21029df6a28c6b2ed227e63c4a8510e1c6a0690b9e2be91"},
+]
+
+[package.dependencies]
+robotframework = ">=3.2"
+
+[package.extras]
+stacktrace = ["robotframework-stacktrace (>=0.4.1)"]
 
 [[package]]
 name = "tomli"
@@ -682,4 +700,4 @@ playwright-example = ["playwright"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9"
-content-hash = "a3fbecddda0260d264f450c242da7402db7a79ccf0585aeca2d3b5166df267f7"
+content-hash = "c15dab9e75b9b51c24d7ebdf018d6912f6fb4f6530fdedee5bf08f3f8024e2db"

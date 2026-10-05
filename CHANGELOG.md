@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- README section "Using It Together With pabot": the combination was tested
+  (all 36 acceptance tests pass under pabot, splitting by suite and with
+  `--testlevelsplit`), with measured timings and caveats (run pabot from the
+  library's virtualenv, concurrency = processes × workers, shared resources
+  across processes).
+- `examples/pabot_demo/`: offline timing demo (4 suites × 8 items × 1 s of
+  simulated I/O) and the `invoke demo-pabot` task, which times robot vs
+  pabot, with and without ParallelRunner, and prints a table.
+- `robotframework-pabot` as a development dependency (used by the demo only).
+
+### Changed
+- README "Summary of Benefits" and ARCHITECTURE "Performance
+  Considerations" now quote measured timings instead of theoretical ones.
+- README project structure, ARCHITECTURE, ROADMAP, CONTRIBUTING and
+  INSTALLATION updated to the current layout and tooling (`utest/`,
+  `tasks.py`, Poetry, release workflow).
+- `.gitignore`: pabot artifacts (`.pabotsuitenames`, `pabot_results/`).
+
+### Fixed
+- `tasks.py`: every invoke task now runs tools with the interpreter invoke
+  itself runs under (`sys.executable`) instead of the first `python` on the
+  PATH. A plain `invoke atest` (without `poetry run` or an activated
+  virtualenv) could pick up another Python and fail 33 of 36 tests with
+  `No module named 'ParallelRunner'`.
+
 ## [0.2.0] - 2026-10-04
 
 First release published to PyPI.

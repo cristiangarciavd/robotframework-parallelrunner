@@ -1,8 +1,7 @@
 # ParallelRunner - Roadmap
 
 This document tracks the project's maturity: what is already in place, and what
-could reasonably be added next. It replaces the old (Spanish-language,
-session-scoped) `IMPROVEMENT_PLAN.md`.
+could reasonably be added next.
 
 ## Current Status (as of 0.2.0)
 
@@ -41,11 +40,15 @@ session-scoped) `IMPROVEMENT_PLAN.md`.
 - `.gitignore`, `.editorconfig`
 
 **Documentation**
-- `README.md` with quickstart and a "How is this different from pabot?" comparison
+- `README.md` with quickstart, a "How is this different from pabot?" comparison
+  and a "Using it together with pabot" section (tested combination, measured
+  timings, caveats)
 - `ARCHITECTURE.md` (technical deep dive)
 - `docs/INSTALLATION.md`, `docs/QUICKSTART.md`, `docs/API_REFERENCE.md`
 - `CHANGELOG.md` (Keep a Changelog format)
 - `examples/custom_logger/README.md` and `ENVIRONMENT_SETUP.md`
+- `examples/pabot_demo/`: offline timing demo comparing robot / pabot, with
+  and without ParallelRunner (`invoke demo-pabot`)
 
 **Community / governance**
 - `CONTRIBUTING.md`
@@ -59,17 +62,17 @@ session-scoped) `IMPROVEMENT_PLAN.md`.
   `repeat=0` regression) and `test_return_values.robot` (call-order
   guarantees, `return_values_only`, `Get Result Values`, and
   `ParallelTaskError` on failure)
+- 15 pytest unit tests under `utest/` (ordering, item selection, failure
+  capture, log replay filtering, mapper resolution, deprecated import path)
 
 **CI**
-- `.github/workflows/tests.yml`: installs the package and runs the Robot Framework
-  suites on push/PR across a small Python version matrix
+- `.github/workflows/tests.yml`: installs with Poetry and runs the unit and
+  acceptance tests, plus a libdoc build check, on Python 3.9, 3.11 and 3.13
+- `.github/workflows/publish.yml`: on a published GitHub Release, runs the
+  tests and publishes to TestPyPI and PyPI via Trusted Publishing
 
 ### Explicitly out of scope for now
 
-- **PyPI publishing workflow.** There is no PyPI token configured for this
-  project yet, so no `publish.yml` / trusted-publishing workflow exists. Once a
-  token (or PyPI Trusted Publisher config) is available, add a release workflow
-  that builds with `python -m build` and uploads via `twine`/`pypa/gh-action-pypi-publish`.
 - **GitHub issue/PR templates.** Not created yet; cheap to add later
   (`.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md`).
 
@@ -91,11 +94,11 @@ These are possible directions, not commitments. Contributions welcome — see
 - **Type-checked mapper contracts** (e.g. a `Protocol` for `logger_mapper`) to catch
   malformed adapters earlier.
 - **Linting/formatting in CI** (ruff/black) and optionally pre-commit hooks.
-- **Code coverage reporting** once there is meaningful Python-level unit test
-  coverage (today the test suite is Robot Framework acceptance tests, which is
-  appropriate for this project but doesn't produce a coverage number in the
-  usual sense).
-- **PyPI release** once the maintainer decides to publish (see "out of scope" above).
+- **Coverage reporting in CI.** `invoke coverage` already measures unit and
+  acceptance tests locally; publishing that number from CI is still open.
+- **Offline acceptance tests.** Most `atest/` suites call a public test API
+  (jsonplaceholder.typicode.com); a local mock server would make CI immune to
+  its outages and rate limits.
 
 ## Contributing to This Roadmap
 

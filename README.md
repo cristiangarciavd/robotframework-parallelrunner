@@ -78,8 +78,10 @@ threading, buffering, and replay logic stay out of your `.robot` files.
 
 ## Summary of Benefits
 
-- **Speed.** Validating 100 APIs that take 1s each takes roughly 10s (with 10
-  workers) instead of 100s.
+- **Speed.** Waiting time is overlapped instead of added up. In this repo's
+  examples, 9 HTTP checks with a 1 s delay each drop from 13 s to 2 s with
+  9 workers, and 4 suites × 8 items × 1 s drop from 32.7 s to 4.6 s with
+  8 workers (see [Using It Together With pabot](#using-it-together-with-pabot)).
 - **Integrity.** Your `log.html` remains the single source of truth — no
   broken XML tags from concurrent writes.
 - **Flexibility.** Pass `repeat=10` to stress-test a single endpoint, or
@@ -130,6 +132,57 @@ for pabot. If you need to speed up "this one test case loops over 100 items
 and I want a single readable log instead of 100 sequential HTTP round trips
 (or 100 merged `output.xml` files)," that's what ParallelRunner is for.
 
+## Using It Together With pabot
+
+The two combine without any extra configuration: pabot splits suites (or
+tests) across processes, and inside each process ParallelRunner splits a
+loop across threads. Every pabot process gets its own ParallelRunner
+instance, its own thread pool and its own `output.xml`, so nothing is shared
+between processes, and pabot merges the results as usual.
+
+```bash
+pabot --processes 4 --pythonpath . atest/
+pabot --processes 4 --testlevelsplit --pythonpath . atest/
+```
+
+Both commands pass the full acceptance suite of this repository (36 tests;
+checked with pabot 5.2.2).
+
+How much time each one saves, from the offline
+[pabot timing demo](https://github.com/cristiangarciavd/robotframework-parallelrunner/tree/main/examples/pabot_demo/)
+(4 suites × 8 items × 1 s of simulated I/O wait; `poetry run invoke demo-pabot`):
+
+| Run | Wall-clock time | Speedup |
+|---|---|---|
+| robot, sequential loop | 32.7 s | ×1.0 |
+| robot + ParallelRunner (8 workers) | 4.6 s | ×7.1 |
+| pabot (4 processes), sequential loop | 10.6 s | ×3.1 |
+| pabot (4 processes) + ParallelRunner (8 workers) | 3.5 s | ×9.2 |
+
+ParallelRunner removes the waiting *inside* each test, and pabot removes it
+*between* suites. With suites this short, pabot's process start-up (about
+2.5 s here) is most of what's left, so the combination pays off more as
+suites get longer.
+
+Things to keep in mind:
+
+- **Run pabot from the virtual environment where the library is installed**
+  (or via `poetry run pabot ...`). pabot starts whichever `robot` command is
+  first on the `PATH`. If that belongs to another Python installation, every
+  test that uses the library fails with
+  `No keyword with name 'Run Parallel Scenarios' found`.
+- **Concurrency multiplies.** The number of simultaneous calls is roughly
+  pabot processes × `ROBOT_THREAD_WORKERS`: 4 processes × 4 workers means up
+  to 16 concurrent requests against the same API or database. Lower one of
+  the two if you hit rate limits, connection-pool limits or lock timeouts.
+- **Shared test resources can collide across processes.** Data, files, user
+  accounts, or a table that a `Suite Setup` resets are visible to every
+  process. With `--testlevelsplit`, each test of a suite runs its own
+  `Suite Setup` in its own process. For example, the `examples/db_seed`
+  suite drops and recreates its table in `Suite Setup`, so two of its tests
+  could interfere with each other. Keep shared state per process, or split
+  by suite.
+
 ## When Not To Use This
 
 - **CPU-bound work.** Threads share Python's GIL — number crunching won't
@@ -149,11 +202,13 @@ and I want a single readable log instead of 100 sequential HTTP round trips
 ## Project Structure
 
 ```
-ParallelRunner/
-├── src/ParallelRunner/     # The installable library (core, do not depend on internals prefixed with `_`)
-├── examples/               # Example "business logic" libraries used by the test suites
-├── atest/            # Robot Framework acceptance suites
-├── docs/                   # INSTALLATION, QUICKSTART, API_REFERENCE
+robotframework-parallelrunner/
+├── src/ParallelRunner/     # The installable library (do not depend on internals prefixed with `_`)
+├── examples/               # Example libraries used by the tests, plus the pabot timing demo
+├── atest/                  # Robot Framework acceptance suites
+├── utest/                  # pytest unit tests
+├── docs/                   # INSTALLATION, QUICKSTART, API_REFERENCE, generated keyword docs
+├── tasks.py                # invoke tasks: tests, libdoc, demo-pabot, build, ...
 └── ARCHITECTURE.md         # Technical deep dive
 ```
 

@@ -96,8 +96,19 @@ poetry run invoke atest    # Robot Framework suites only
 ```
 
 The acceptance suites use `examples/` as "business logic" libraries, so the
-repository root must be on `--pythonpath` (the `atest` task does that). See
-[QUICKSTART.md](QUICKSTART.md) for a walkthrough.
+repository root must be on `--pythonpath` (the `atest` task does that).
+
+To see how much time ParallelRunner and pabot save, alone and combined, run
+the offline timing demo (about a minute; pabot is included in the dev
+dependencies):
+
+```bash
+poetry run invoke demo-pabot
+```
+
+Details and measured results are in
+[examples/pabot_demo/README.md](../examples/pabot_demo/README.md). For a
+walkthrough of the library itself, see [QUICKSTART.md](QUICKSTART.md).
 
 ## Optional: UI automation example (Playwright)
 

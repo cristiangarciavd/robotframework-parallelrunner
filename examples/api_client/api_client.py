@@ -19,7 +19,7 @@ class ApiClient:
     def verify_agent_data(self, agent_id: str, _logger: Optional[Callable] = None, **kwargs) -> dict:
         """
         Fetches data from a public API and validates it.
-        _logger is injected by the ParallelLibrary to capture logs.
+        _logger is injected by ParallelRunner to capture logs.
         """
         log = _logger if _logger else default_log
         

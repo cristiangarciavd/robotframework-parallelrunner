@@ -72,6 +72,8 @@ coverage = ">=7.0"
 invoke = ">=2.0"
 # Used by the example libraries the acceptance tests run against (examples/).
 requests = ">=2.25"
+# Used by `invoke demo-pabot` (examples/pabot_demo/); not needed by the library itself.
+robotframework-pabot = ">=4.0"
 
 [tool.pytest.ini_options]
 testpaths = ["utest"]
