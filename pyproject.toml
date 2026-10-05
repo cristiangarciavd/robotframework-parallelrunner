@@ -6,7 +6,7 @@ build-backend = "poetry.core.masonry.api"
 name = "robotframework-parallelrunner"
 # Single source of truth for the version: bump with `poetry version patch|minor|major`.
 # ParallelRunner.__version__ / ROBOT_LIBRARY_VERSION read it back from the installed metadata.
-version = "0.2.0"
+version = "0.2.1"
 description = "Run a keyword in parallel inside a single Robot Framework test case, with one clean, ordered log.html."
 readme = "README.md"
 license = "MIT"

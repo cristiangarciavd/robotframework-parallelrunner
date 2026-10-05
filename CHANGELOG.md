@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-05
+
 ### Added
 - README section "Using It Together With pabot": the combination was tested
   (all 36 acceptance tests pass under pabot, splitting by suite and with
