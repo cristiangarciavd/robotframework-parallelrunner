@@ -283,7 +283,7 @@ Python's GIL (Global Interpreter Lock) limits CPU-bound parallelization. For hea
 ## Testing Coverage
 
 Acceptance tests: **41 test cases** across 7 Robot Framework suites in `atest/`.
-Unit tests: **28 pytest tests** in `utest/` (ordering, item selection, failure
+Unit tests: **33 pytest tests** in `utest/` (ordering, item selection, failure
 capture, log replay filtering, mapper resolution and warnings, deprecated
 import path).
 

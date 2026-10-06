@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - README section "Using It Together With pabot": the combination was tested
-  (all 36 acceptance tests pass under pabot, splitting by suite and with
+  (all 41 acceptance tests pass under pabot, splitting by suite and with
   `--testlevelsplit`), with measured timings and caveats (run pabot from the
   library's virtualenv, concurrency = processes × workers, shared resources
   across processes).
@@ -47,8 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now logs a warning saying why, e.g. `Ignoring ROBOT_LOGGER_MAPPER
   'custom_logger_adapter': expected a 'module.function' path ...`. Behavior is
   otherwise unchanged: the default buffered logger (or, for an invalid
-  argument, `ROBOT_LOGGER_MAPPER`) is still used. Empty values are treated as
-  "not given".
+  argument, `ROBOT_LOGGER_MAPPER`) is still used. `None`, an empty string and
+  the text `None` (any case, e.g. `logger_mapper=None` in a `.robot` file) mean
+  "not given" and don't warn.
 - Documentation claimed `ROBOT_LOGGER_MAPPER` accepted names registered with
   the example's `register_mapper`, and suggested `robot --variable
   ROBOT_LOGGER_MAPPER:...`; neither ever worked (ParallelRunner only resolves

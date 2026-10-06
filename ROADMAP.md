@@ -63,7 +63,7 @@ could reasonably be added next.
   guarantees, `return_values_only`, `Get Result Values`, and
   `ParallelTaskError` on failure), plus `test_logger_mapper.robot`
   (which logger is really used: mapper vs default buffered logger)
-- 28 pytest unit tests under `utest/` (ordering, item selection, failure
+- 33 pytest unit tests under `utest/` (ordering, item selection, failure
   capture, log replay filtering, mapper resolution and warnings, deprecated
   import path)
 

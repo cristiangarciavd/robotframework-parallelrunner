@@ -264,10 +264,12 @@ class ParallelRunner:
         typos and unsupported values such as bare registered names.
 
         Args:
-            mapper: Callable, ``module.function`` string, or None / empty string.
+            mapper: Callable, ``module.function`` string, or "not given": None,
+                an empty string, or the string "None" (any case - Robot
+                Framework's usual spelling of None, e.g. ``logger_mapper=None``).
             source: Where the value came from, used in the warning message.
         """
-        if mapper is None or (isinstance(mapper, str) and not mapper.strip()):
+        if mapper is None or (isinstance(mapper, str) and mapper.strip().upper() in ("", "NONE")):
             return None
 
         if callable(mapper):
@@ -275,7 +277,7 @@ class ParallelRunner:
 
         if isinstance(mapper, str):
             module_name, _, func_name = mapper.strip().rpartition(".")
-            if not module_name:
+            if not module_name or not func_name:
                 reason = "expected a 'module.function' path such as 'my_package.my_module.my_mapper'"
             else:
                 try:

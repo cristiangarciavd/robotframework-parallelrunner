@@ -157,7 +157,7 @@ def test_logger_mapper_resolution(robot_logger, mapper_module):
     assert warnings_logged(robot_logger) == []
 
 
-@pytest.mark.parametrize("value", [None, "", "   "])
+@pytest.mark.parametrize("value", [None, "", "   ", "None", "NONE", "none"])
 def test_missing_mapper_is_silently_none(robot_logger, value):
     assert ParallelRunner()._resolve_mapper(value) is None
     assert warnings_logged(robot_logger) == []
@@ -167,6 +167,8 @@ def test_missing_mapper_is_silently_none(robot_logger, value):
     "value, reason",
     [
         ("custom_logger_adapter", "expected a 'module.function' path"),
+        ("os.", "expected a 'module.function' path"),
+        (".record", "expected a 'module.function' path"),
         ("no.such.module.func", "cannot import module 'no.such.module'"),
         ("fake_mappers.missing", "module 'fake_mappers' has no callable 'missing'"),
         ("fake_mappers.not_callable", "module 'fake_mappers' has no callable 'not_callable'"),
