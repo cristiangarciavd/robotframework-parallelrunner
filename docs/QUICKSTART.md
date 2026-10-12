@@ -74,11 +74,36 @@ Run it with `my_project` on the Python path:
 robot --pythonpath . my_suite.robot
 ```
 
-You'll get one `log.html` with a clearly grouped log block per item, plus a
-`${results}` list containing a `PASS`/`FAIL` status, the item, captured logs,
-and either the return value or the error message for each one — in call
-order, so `${results}[0]` is always the first item/repeat call, regardless
-of which thread happened to finish first.
+You'll get one `log.html` with a clearly grouped log block per item (with
+`remove_passing_logs=True`, only the failed one). Because the `bad` item
+raised, the keyword — and the test — fails once all five calls have finished:
+
+```
+ParallelTaskError: 1 of 5 parallel task(s) failed: item='bad': Invalid item: bad
+```
+
+Remove `bad` from the list and the test passes, with `${results}` holding one
+entry per item: its `PASS` status, the item, captured logs and the return
+value. Entries are in call order, so `${results}[0]` is always the first
+item/repeat call, regardless of which thread happened to finish first.
+
+### Checking failures yourself
+
+To get the results even when some calls fail, pass `fail_on_error=False`.
+Every entry then has a `PASS`/`FAIL` status (failed ones carry the error
+message instead of a return value), and it's up to the test to check them:
+
+```robot
+Check Each Item Myself
+    ${items}=    Create List    1    2    3    bad    5
+    ${results}=    Run Parallel Scenarios
+    ...    keyword=Process Item
+    ...    library=my_project.my_client.MyClient
+    ...    for_loop_iterable=${items}
+    ...    fail_on_error=False
+    Should Be Equal    ${results}[3][status]    FAIL
+    Should Be Equal    ${results}[3][error]    Invalid item: bad
+```
 
 ## 4. Just want the return values?
 
@@ -109,3 +134,4 @@ result list before deciding whether to extract the values.
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) - how the log buffering/replay mechanism works internally.
 - `examples/custom_logger/` - adapting a project that already has its own custom/severity-based logger.
 - `atest/` - more worked examples (warnings, errors, log-level filtering, custom loggers).
+  `atest/test_failures.robot` shows every way of handling failed calls, offline.

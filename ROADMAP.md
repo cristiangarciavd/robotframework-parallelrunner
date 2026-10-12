@@ -19,6 +19,9 @@ could reasonably be added next.
   for extracting a plain, ordered tuple of each call's return value - the
   natural fit for `repeat`, since there's no input list to zip results
   against (see `ParallelTaskError`, raised if any task failed)
+- Failed calls fail `Run Parallel Scenarios` by default (`ParallelTaskError`,
+  after every call finished and logs were replayed); `fail_on_error=False`
+  returns a status per call instead
 
 **Custom logger support**
 - `_create_local_logger()` for local adaptation inside existing methods
@@ -55,16 +58,18 @@ could reasonably be added next.
 - `CODE_OF_CONDUCT.md` (Contributor Covenant)
 
 **Tests**
-- 41 Robot Framework test cases across 7 suites under `atest/`, all passing,
+- 52 Robot Framework test cases across 8 suites under `atest/`, all passing,
   including a dedicated `test_repeat.robot` covering the `repeat` parameter
   (parallel data setup, repeated calls to a fixed endpoint, precedence vs.
   `for_loop_iterable`, the no-argument default, `return_values_only`, and the
   `repeat=0` regression) and `test_return_values.robot` (call-order
   guarantees, `return_values_only`, `Get Result Values`, and
   `ParallelTaskError` on failure), plus `test_logger_mapper.robot`
-  (which logger is really used: mapper vs default buffered logger)
-- 33 pytest unit tests under `utest/` (ordering, item selection, failure
-  capture, log replay filtering, mapper resolution and warnings, deprecated
+  (which logger is really used: mapper vs default buffered logger) and
+  `test_failures.robot` (failed calls fail the keyword, `fail_on_error=False`;
+  offline)
+- 38 pytest unit tests under `utest/` (ordering, item selection, failure
+  handling, log replay filtering, mapper resolution and warnings, deprecated
   import path)
 
 **CI**

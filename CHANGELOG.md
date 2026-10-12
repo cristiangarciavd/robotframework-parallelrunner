@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Breaking: a failed call now fails `Run Parallel Scenarios`.** When any
+  call raises, the keyword still waits for every other call and replays all
+  logs, then fails with `ParallelTaskError` listing each failed item and its
+  error, e.g. `ParallelTaskError: 2 of 5 parallel task(s) failed:
+  item='4': Simulated error for agent 4; item='5': Simulated error for agent 5`.
+  Before, a failed call was only logged at `ERROR` level and the keyword
+  passed, so a test that didn't check every `status` itself passed with
+  failed calls. To keep the old behavior, pass `fail_on_error=False` (see
+  below). `ParallelTaskError` is now also raised without
+  `return_values_only=True`.
+
+### Added
+- `fail_on_error` parameter on `Run Parallel Scenarios` (default `True`).
+  With `fail_on_error=False` the keyword returns the result list even when
+  calls failed: each entry has a `PASS`/`FAIL` status and the test checks
+  them itself (e.g. `Should Be Equal    ${results}[1][status]    PASS`).
+  `return_values_only=True` and `Get Result Values` still always fail on a
+  failed call. Note: a keyword argument named `fail_on_error` is no longer
+  forwarded to the target keyword.
+- `atest/test_failures.robot` (offline, 10 tests) and
+  `examples/order_check/`: every way of handling failed calls - the keyword
+  failing, every call still running first, every failed item in the message,
+  `fail_on_error=False`, `Run Keyword And Ignore Error`.
+- Library documentation section "Failures"; QUICKSTART section "Checking
+  failures yourself".
+
+### Fixed
+- Tests that ran failing calls (`test_api_negative.robot` "Parallel With
+  Errors - ...", the "With Errors" custom logger tests) passed without
+  checking anything; they now expect the failure, and new tests cover
+  `fail_on_error=False`. The opt-in Playwright example no longer passes when a
+  page check fails.
+
 ## [0.2.1] - 2026-10-06
 
 ### Added

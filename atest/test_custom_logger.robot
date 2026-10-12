@@ -20,7 +20,8 @@ Custom Logger - Parallel With Warnings And Mapper
 Custom Logger - Parallel With Errors And Mapper
     [Documentation]    Tests custom logger with errors and mapper.
     ${agents}=    Create List    1    2    3    4    5
-    Run Parallel Scenarios    keyword=Validate With Custom Errors    for_loop_iterable=${agents}    library=${custom_logger_lib}    logger_mapper=examples.custom_logger.custom_logging_mapper.custom_logger_adapter
+    Run Keyword And Expect Error    ParallelTaskError: 2 of 5 parallel task(s) failed:*
+    ...    Run Parallel Scenarios    keyword=Validate With Custom Errors    for_loop_iterable=${agents}    library=${custom_logger_lib}    logger_mapper=examples.custom_logger.custom_logging_mapper.custom_logger_adapter
 
 Custom Logger - With Remove Passing Logs
     [Documentation]    Tests custom logger with remove_passing_logs to reduce noise.

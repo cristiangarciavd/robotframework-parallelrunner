@@ -10,13 +10,14 @@ from .version import __version__
 
 class ParallelTaskError(RuntimeError):
     """
-    Raised when at least one parallel task failed and there is no meaningful
-    return value to hand back for it - by ``get_result_values``, and by
-    ``run_parallel_scenarios`` when called with ``return_values_only=True``.
+    Raised when at least one parallel task failed: by ``run_parallel_scenarios``
+    (unless called with ``fail_on_error=False``), and by ``get_result_values``,
+    which has no meaningful return value to hand back for a failed task.
 
-    Silently substituting `None` for a failed task's value would let a test
-    keep going with bad data instead of failing for the right reason, so
-    this is raised instead.
+    Returning normally after a failed call would let a test keep going (and
+    pass) with bad or missing data instead of failing for the right reason,
+    so this is raised instead - after every task has finished and all logs
+    have been replayed.
 
     Attributes:
         failures: the subset of result dicts with ``status == "FAIL"``,
@@ -91,9 +92,24 @@ class ParallelRunner:
     | result   | The return value of the call (only when ``status`` is ``PASS``). |
     | error    | The error message (only when ``status`` is ``FAIL``). |
 
-    A failing call does *not* fail the keyword; check ``status`` yourself,
-    or use ``return_values_only=True`` / `Get Result Values`, which fail
-    if any call failed.
+    = Failures =
+
+    If any call raises, `Run Parallel Scenarios` still waits for every other
+    call, replays all logs, and then *fails* with a ``ParallelTaskError``
+    that lists each failed item and its error, e.g.
+    ``2 of 5 parallel task(s) failed: item='4': ...; item='5': ...``.
+    One failed call is never hidden behind a passing keyword.
+
+    To inspect failures yourself instead, pass ``fail_on_error=False``: the
+    keyword then always returns the result list, failed calls get
+    ``status`` ``FAIL`` (their error is also logged at ``ERROR`` level), and
+    it is up to you to assert on them:
+
+    | ${results}= | Run Parallel Scenarios | keyword=Verify Agent Data | library=MyLibrary | for_loop_iterable=${agents} | fail_on_error=False |
+    | Should Be Equal | ${results}[1][status] | PASS |
+
+    ``return_values_only=True`` and `Get Result Values` always fail if any
+    call failed, because a failed call has no return value.
 
     = Custom logger mappers =
 
@@ -146,6 +162,7 @@ class ParallelRunner:
         thread_log_level: str = "INFO",
         logger_mapper: Optional[Any] = None,
         return_values_only: bool = False,
+        fail_on_error: bool = True,
         **kwargs
     ) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]:
         """Runs ``keyword`` from ``library`` concurrently, once per item or N times.
@@ -178,17 +195,23 @@ class ParallelRunner:
           return value (in call order) instead of the result dictionaries.
           Fails with ``ParallelTaskError`` if any call failed. Same as calling
           `Get Result Values` on the default return value.
+        - ``fail_on_error``: If true (default), fail with ``ParallelTaskError``
+          when any call failed, after all calls have finished and their logs
+          have been replayed. If false, return the results anyway and leave
+          checking ``status`` to the caller. See `Failures`.
         - ``**kwargs``: Any other named argument is passed to every call.
 
         Returns a list of result dictionaries (see `Result format`), in call
         order: entry ``i`` belongs to ``for_loop_iterable[i]`` / repeat
-        index ``i``, regardless of which thread finished first.
+        index ``i``, regardless of which thread finished first. With the
+        default ``fail_on_error=True`` it only returns when every call passed.
 
         Examples:
         | ${agents}=    | Create List            | 1                         | 2                       | 3 |
         | ${results}=   | Run Parallel Scenarios | keyword=Verify Agent Data | library=MyLibrary       | for_loop_iterable=${agents} |
         | ${results}=   | Run Parallel Scenarios | keyword=Check Health      | library=MyLibrary       | repeat=8 | agent_id=1 |
         | ${id1}    ${id2}    ${id3}= | Run Parallel Scenarios | keyword=Seed Record | library=MyLibrary | repeat=3 | return_values_only=True |
+        | ${results}=   | Run Parallel Scenarios | keyword=Verify Agent Data | library=MyLibrary       | for_loop_iterable=${agents} | fail_on_error=False |
         """
         # Determine items to process. NOTE: `repeat or 1` would be wrong here -
         # 0 is falsy in Python, so an explicit repeat=0 would silently fall
@@ -228,6 +251,8 @@ class ParallelRunner:
 
         if return_values_only:
             return self.get_result_values(results)
+        if fail_on_error:
+            self._raise_if_any_failed(results)
         return results
 
     def get_result_values(self, results: List[Dict[str, Any]]) -> Tuple[Any, ...]:
@@ -238,7 +263,9 @@ class ParallelRunner:
 
         Passing ``return_values_only=True`` to `Run Parallel Scenarios` does
         the same in one step; use this keyword when you want to inspect the
-        full results first (e.g. assert on ``status`` or ``logs``).
+        full results first (e.g. assert on ``status`` or ``logs``). Such a
+        result list may only contain failed calls if it came from a run with
+        ``fail_on_error=False``.
 
         Fails with ``ParallelTaskError`` if any entry has status ``FAIL`` -
         a failed call has no return value to put in its slot.
@@ -247,10 +274,13 @@ class ParallelRunner:
         | ${results}=                 | Run Parallel Scenarios | keyword=Seed Record | library=MyLibrary | repeat=3 |
         | ${id1}    ${id2}    ${id3}= | Get Result Values      | ${results}          |
         """
+        self._raise_if_any_failed(results)
+        return tuple(entry["result"] for entry in results)
+
+    def _raise_if_any_failed(self, results: List[Dict[str, Any]]) -> None:
         failures = [entry for entry in results if entry.get("status") == "FAIL"]
         if failures:
             raise ParallelTaskError(failures, len(results))
-        return tuple(entry["result"] for entry in results)
 
     def _resolve_mapper(self, mapper: Optional[Any], source: str = "logger_mapper") -> Optional[Any]:
         """

@@ -37,13 +37,15 @@ def run_parallel_scenarios(
     thread_log_level: str = "INFO",
     logger_mapper: Optional[Any] = None,
     return_values_only: bool = False,
+    fail_on_error: bool = True,
     **kwargs: Any,
 ) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]
 ```
 
 Runs `keyword` once per item (or `repeat` times) on a thread pool, then replays
 all captured logs into the Robot Framework log sequentially, so `log.html`
-never gets corrupted by concurrent writes.
+never gets corrupted by concurrent writes. If any call failed, the keyword
+then fails with `ParallelTaskError` (unless `fail_on_error=False`).
 
 ### Parameters
 
@@ -57,6 +59,7 @@ never gets corrupted by concurrent writes.
 | `thread_log_level` | `str` | No | `"INFO"` | Minimum level to replay: one of `"INFO"`, `"WARN"`, `"ERROR"`. Uses the ordering `INFO(1) < WARN(2) < ERROR(3)`; messages below the threshold are dropped. `"IGNORE"`-level messages are always dropped regardless of this setting. |
 | `logger_mapper` | callable, `str`, or `None` | No | `None` | Custom logger adapter with signature `mapper(msg: str, level: str) -> None`. May be passed as a callable, or as a string module path (`"package.module.function"`) which is imported dynamically. Bare names without a module path (e.g. `"custom_logger_adapter"`) are not supported. A value that can't be resolved (bare name, module that can't be imported, missing or non-callable attribute) is ignored with a warning in the log, and the library then falls back to the `ROBOT_LOGGER_MAPPER` environment variable (see below). If neither resolves, logs are captured internally and replayed through `robot.api.logger`. A mapper's messages are not buffered or replayed, so `thread_log_level` and `remove_passing_logs` don't apply to them; it is called from several threads at once and must be thread-safe. |
 | `return_values_only` | `bool` | No | `False` | When `True`, return a plain `tuple` of each call's return value - in call order - instead of the list of result dictionaries. Raises `ParallelTaskError` if any task failed (there is no meaningful value to put in its slot). This is the natural pairing with `repeat`: since there's no input list to zip results against, unpacking directly into N variables is often more convenient than indexing into a list of dicts - e.g. `${id1}    ${id2}    ${id3}=    Run Parallel Scenarios    ...    repeat=3    return_values_only=True`. Equivalent to calling `Get Result Values` on the default (dict-list) return value. |
+| `fail_on_error` | `bool` | No | `True` | When `True`, raise `ParallelTaskError` if any task failed, so the keyword (and the test) fails. It is raised only after every task has finished and all logs have been replayed, and its message lists each failed item and its error. When `False`, return the result list anyway: failed tasks have `status == "FAIL"` (and their error is logged at `ERROR` level), and checking them is up to the caller, e.g. `Should Be Equal    ${results}[1][status]    PASS`. Has no effect with `return_values_only=True`, which always raises on a failed task. Before 0.3.0 the keyword behaved as if this were `False`. |
 | `**kwargs` | `Any` | No | - | Any additional keyword arguments are forwarded verbatim to every call of `keyword`. |
 
 ### Return value
@@ -73,6 +76,10 @@ holds regardless of which thread happens to finish first.
 
 - On success: `{"status": "PASS", "item": <item>, "logs": [(level, msg), ...], "result": <return value of keyword>}`
 - On failure (the method raised): `{"status": "FAIL", "item": <item>, "logs": [(level, msg), ...], "error": "<exception message>"}`
+
+With the default `fail_on_error=True` the list is only returned when every
+task passed; any failure raises `ParallelTaskError` instead. `FAIL` entries
+are only returned with `fail_on_error=False`.
 
 `item` is either the element from `for_loop_iterable` or the integer index
 from `range(repeat)`.
@@ -128,7 +135,8 @@ ${results}=    Run Parallel Scenarios    keyword=Seed Fixture Record    library=
 ${id1}    ${id2}    ${id3}=    Get Result Values    ${results}
 ```
 
-Raises `ParallelTaskError` if any entry in `results` has `status == "FAIL"`.
+Raises `ParallelTaskError` if any entry in `results` has `status == "FAIL"`
+(only possible for a list collected with `fail_on_error=False`).
 
 ## `ParallelTaskError`
 
@@ -136,11 +144,17 @@ Raises `ParallelTaskError` if any entry in `results` has `status == "FAIL"`.
 from ParallelRunner import ParallelTaskError
 ```
 
-Raised by `Get Result Values` and by `Run Parallel Scenarios` (when called
-with `return_values_only=True`) if at least one task failed. A failed task
-has no return value, so raising loudly here - instead of silently
-substituting `None` - is what makes a test relying on `return_values_only`
-fail for the right reason instead of continuing with a hole in the data.
+Raised by `Run Parallel Scenarios` (unless called with `fail_on_error=False`
+and without `return_values_only=True`) and by `Get Result Values` if at least
+one task failed. Returning normally would let the test continue - and pass -
+with a hole in the data; raising makes it fail for the right reason.
+
+`Run Parallel Scenarios` raises it only after every task has finished and all
+logs have been replayed, so `log.html` still shows what each task did. In Robot
+Framework the failure message reads
+`ParallelTaskError: 2 of 5 parallel task(s) failed: ...`; handle it like any
+other keyword failure (`Run Keyword And Expect Error`,
+`Run Keyword And Ignore Error`, ...).
 
 - Subclass of `RuntimeError`.
 - `.failures`: the subset of result dicts with `status == "FAIL"`, in the
@@ -148,7 +162,8 @@ fail for the right reason instead of continuing with a hole in the data.
   `logs`, and `error` keys (see the `FAIL` shape under **Return value**
   above).
 - `str(error)`: a human-readable summary, e.g.
-  `"2 of 5 parallel task(s) failed: item=4: Simulated error for agent 4; item=5: Simulated error for agent 5"`.
+  `"2 of 5 parallel task(s) failed: item='4': Simulated error for agent 4; item='5': Simulated error for agent 5"`
+  (items are shown with `repr()`; Robot Framework list items are strings).
 
 ### Internal helper methods
 

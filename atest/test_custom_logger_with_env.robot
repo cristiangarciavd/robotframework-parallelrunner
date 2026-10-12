@@ -33,7 +33,8 @@ Custom Logger - Global Mapper - Parallel With Warnings
 Custom Logger - Global Mapper - Parallel With Errors
     [Documentation]    Tests custom logger with errors using global mapper.
     ${agents}=    Create List    1    2    3    4    5
-    Run Parallel Scenarios
+    Run Keyword And Expect Error    ParallelTaskError: 2 of 5 parallel task(s) failed:*
+    ...    Run Parallel Scenarios
     ...    keyword=Validate With Custom Errors
     ...    library=${custom_logger_lib}
     ...    for_loop_iterable=${agents}

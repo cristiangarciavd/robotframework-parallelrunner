@@ -106,12 +106,14 @@ Get Result Values Extracts A Tuple From An Existing Result List
 
 Get Result Values Raises When A Task Failed
     [Documentation]    Same failure guard as `return_values_only=True`, but
-    ...    invoked standalone against an already-collected result list.
+    ...    invoked standalone against an already-collected result list
+    ...    (collected with `fail_on_error=False`, so it can hold failed calls).
     @{agents}=    Create List    1    2    3    4    5
     ${results}=    Run Parallel Scenarios
     ...    keyword=Validate Agents With Errors
     ...    library=${test_library}
     ...    for_loop_iterable=${agents}
+    ...    fail_on_error=False
     ${status}    ${message}=    Run Keyword And Ignore Error
     ...    Get Result Values    ${results}
     Should Be Equal    ${status}    FAIL

@@ -84,6 +84,10 @@ threading, buffering, and replay logic stay out of your `.robot` files.
   8 workers (see [Using It Together With pabot](#using-it-together-with-pabot)).
 - **Integrity.** Your `log.html` remains the single source of truth — no
   broken XML tags from concurrent writes.
+- **No hidden failures.** If any call fails, the keyword fails too (after all
+  calls finish and their logs are replayed), with a message listing every
+  failed item. Pass `fail_on_error=False` to get a `PASS`/`FAIL` status per
+  item and check them yourself.
 - **Flexibility.** Pass `repeat=10` to stress-test a single endpoint, or
   `for_loop_iterable=${items}` for batch validation of a whole list.
 - **Ergonomics.** Results come back in call order (not completion order), so
@@ -145,7 +149,7 @@ pabot --processes 4 --pythonpath . atest/
 pabot --processes 4 --testlevelsplit --pythonpath . atest/
 ```
 
-Both commands pass the full acceptance suite of this repository (41 tests;
+Both commands pass the full acceptance suite of this repository (52 tests;
 checked with pabot 5.2.2).
 
 How much time each one saves, from the offline

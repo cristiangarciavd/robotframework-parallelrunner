@@ -31,6 +31,10 @@ ParallelRunner/
 │   │   ├── __init__.py
 │   │   └── db_seed_client.py  # Flagship `repeat` + `return_values_only` use case
 │   │
+│   ├── order_check/           # Failure handling example: some orders fail on purpose (offline)
+│   │   ├── __init__.py
+│   │   └── order_check_client.py
+│   │
 │   ├── pabot_demo/            # Offline timing demo: robot vs pabot, with/without ParallelRunner
 │   │   ├── demo_client.py     # Simulated I/O (1 s sleep per item), no network
 │   │   ├── demo.resource      # Shared keyword; MODE=sequential|parallel
@@ -50,6 +54,7 @@ ParallelRunner/
 │   ├── test_custom_logger.robot        # Tests with an explicit custom logger adapter
 │   ├── test_custom_logger_with_env.robot  # Same, via ROBOT_LOGGER_MAPPER env var
 │   ├── test_logger_mapper.robot        # Which logger is really used (mapper vs default), offline
+│   ├── test_failures.robot             # Failed calls fail the keyword; `fail_on_error=False`, offline
 │   └── resources/MapperProbe.py        # Test helper: recording mapper + logging keyword
 │
 ├── utest/                     # pytest unit tests (no Robot execution context needed)
@@ -99,6 +104,7 @@ run_parallel_scenarios(
     thread_log_level: str = "INFO",     # Filter by level: INFO, WARN, ERROR
     logger_mapper: Optional[Callable] = None,  # Adapter for custom loggers
     return_values_only: bool = False,  # Return a plain tuple of return values instead
+    fail_on_error: bool = True,        # Fail if any call failed (False: return statuses instead)
     **kwargs: Any              # Extra args passed to method
 ) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]
 ```
@@ -115,6 +121,7 @@ run_parallel_scenarios(
 | `thread_log_level` | str | Min level to show: INFO, WARN, ERROR | "INFO" |
 | `logger_mapper` | Callable | Custom logger adapter | None |
 | `return_values_only` | bool | Return a plain `tuple` of each call's return value (call order), instead of the list of result dicts. Raises `ParallelTaskError` on any failure. | False |
+| `fail_on_error` | bool | Raise `ParallelTaskError` if any call failed, after all calls finished and logs were replayed. `False` returns the result list with a `PASS`/`FAIL` status per call instead. | True |
 | `**kwargs` | Any | Extra args for method | - |
 
 ### Result ordering
@@ -127,6 +134,22 @@ collected by calling `.result()` on each future *in submission order*;
 `.result()` on an earlier future simply blocks until that specific task
 finishes, it does not force tasks to run one at a time. This makes direct
 indexing - and tuple-unpacking via `return_values_only` - safe to rely on.
+
+### Failure handling
+
+Each worker catches any exception raised by its call and turns it into a
+`FAIL` result entry (the error is also added to that call's buffered logs at
+`ERROR` level), so one failure never cancels or hides the other calls. Once
+every call has finished and the logs have been replayed, the main thread
+checks the results: with the default `fail_on_error=True`, any `FAIL` entry
+raises `ParallelTaskError`, listing each failed item and its error, which
+fails the keyword like any other Robot Framework failure. With
+`fail_on_error=False` the full result list is returned and the test decides
+what a failed call means. `return_values_only=True` always raises on a
+failed call, since there is no return value to put in its slot.
+
+Before 0.3.0 failed calls never failed the keyword: they were only logged at
+`ERROR` level, and a test that didn't check each `status` itself passed.
 
 ### Method Signature Pattern
 
@@ -173,6 +196,23 @@ Show Only Warnings And Errors
     ...    thread_log_level=WARN
     ...    remove_passing_logs=True
 ```
+
+### Checking Failures Yourself
+
+```robot
+*** Test Cases ***
+Report Each Failed Item
+    ${items}=    Create List    1    2    3    4    5
+    ${results}=    Run Parallel Scenarios
+    ...    keyword=Validate Agents With Errors
+    ...    library=examples.api_client.api_client.ApiClient
+    ...    for_loop_iterable=${items}
+    ...    fail_on_error=False
+    Should Be Equal    ${results}[3][status]    FAIL
+```
+
+Without `fail_on_error=False`, this call fails with
+`ParallelTaskError: 2 of 5 parallel task(s) failed: ...`.
 
 ### With Custom Logger
 
@@ -282,20 +322,21 @@ Python's GIL (Global Interpreter Lock) limits CPU-bound parallelization. For hea
 
 ## Testing Coverage
 
-Acceptance tests: **41 test cases** across 7 Robot Framework suites in `atest/`.
-Unit tests: **33 pytest tests** in `utest/` (ordering, item selection, failure
-capture, log replay filtering, mapper resolution and warnings, deprecated
-import path).
+Acceptance tests: **52 test cases** across 8 Robot Framework suites in `atest/`.
+Unit tests: **38 pytest tests** in `utest/` (ordering, item selection, failure
+handling and `fail_on_error`, log replay filtering, mapper resolution and
+warnings, deprecated import path).
 
 | Suite | Cases | Coverage |
 |-------|-------|----------|
 | test_api.robot | 2 | Happy path (sequential & parallel) |
-| test_api_negative.robot | 10 | Warnings, errors, log levels, filtering |
+| test_api_negative.robot | 11 | Warnings, errors, log levels, filtering; failed calls fail the keyword, or are returned with `fail_on_error=False` |
 | test_repeat.robot | 6 | `repeat`: parallel data creation, fixed-endpoint calls, precedence vs. `for_loop_iterable`, default (neither given), `return_values_only` unpacking, explicit `repeat=0` runs zero times |
 | test_return_values.robot | 7 | Call-order guarantees (`repeat` and `for_loop_iterable`), `return_values_only` (success and `ParallelTaskError` on failure), standalone `Get Result Values` |
 | test_custom_logger.robot | 5 | Custom logger adapter integration, passed explicitly |
 | test_custom_logger_with_env.robot | 6 | Same, configured via `ROBOT_LOGGER_MAPPER` env var |
 | test_logger_mapper.robot | 5 | Which logger is actually used: explicit/env mapper paths receive the messages; bare or unresolvable names are ignored and logs stay buffered; fallback from an invalid argument to the env var. Offline |
+| test_failures.robot | 10 | Failed calls: the keyword fails after every call ran, with every failed item in the message; `fail_on_error=False` returns a status per item; `return_values_only` and `Get Result Values` always fail. Offline |
 
 Run all tests (after `poetry install`):
 

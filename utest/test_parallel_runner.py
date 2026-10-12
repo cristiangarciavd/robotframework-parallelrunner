@@ -92,16 +92,48 @@ def test_items_selection(runner, robot_logger, kwargs, expected_items):
     assert [r["item"] for r in results] == expected_items
 
 
-def test_failed_call_is_captured_not_raised(runner, robot_logger):
-    results = runner.run_parallel_scenarios("Fail On Two", "Fake", for_loop_iterable=[1, 2, 3])
+def test_failed_call_fails_the_keyword_by_default(runner, robot_logger):
+    with pytest.raises(ParallelTaskError) as error:
+        runner.run_parallel_scenarios("Fail On Two", "Fake", for_loop_iterable=[1, 2, 3])
+    assert str(error.value) == "1 of 3 parallel task(s) failed: item=2: boom"
+    assert [entry["item"] for entry in error.value.failures] == [2]
+
+
+def test_every_call_finishes_and_is_logged_before_failing(runner, robot_logger):
+    with pytest.raises(ParallelTaskError):
+        runner.run_parallel_scenarios("Fail On Two", "Fake", for_loop_iterable=[1, 2, 3])
+    replayed = [msg for _, msg in robot_logger.messages]
+    assert replayed.count("Status: PASS") == 2
+    assert replayed.count("Status: FAIL") == 1
+    assert ("ERROR", "Thread failed for item 2: boom") in robot_logger.messages
+
+
+def test_all_failures_are_listed_in_call_order(runner, robot_logger):
+    with pytest.raises(ParallelTaskError) as error:
+        runner.run_parallel_scenarios("Fail On Two", "Fake", for_loop_iterable=[2, 1, 2])
+    assert str(error.value).startswith("2 of 3 parallel task(s) failed")
+    assert len(error.value.failures) == 2
+
+
+def test_fail_on_error_false_returns_failed_calls_as_results(runner, robot_logger):
+    results = runner.run_parallel_scenarios("Fail On Two", "Fake", for_loop_iterable=[1, 2, 3], fail_on_error=False)
     assert [r["status"] for r in results] == ["PASS", "FAIL", "PASS"]
     assert results[1]["error"] == "boom"
     assert "result" not in results[1]
+    assert ("ERROR", "Thread failed for item 2: boom") in robot_logger.messages
 
 
-def test_return_values_only_raises_when_any_call_failed(runner, robot_logger):
+def test_fail_on_error_is_not_forwarded_to_the_keyword(runner, robot_logger):
+    values = runner.run_parallel_scenarios("Echo Item", "Fake", repeat=1, fail_on_error=False, return_values_only=True)
+    assert values == ({"item": 0},)
+
+
+@pytest.mark.parametrize("fail_on_error", [True, False])
+def test_return_values_only_raises_when_any_call_failed(runner, robot_logger, fail_on_error):
     with pytest.raises(ParallelTaskError) as error:
-        runner.run_parallel_scenarios("Fail On Two", "Fake", for_loop_iterable=[1, 2, 3], return_values_only=True)
+        runner.run_parallel_scenarios(
+            "Fail On Two", "Fake", for_loop_iterable=[1, 2, 3], return_values_only=True, fail_on_error=fail_on_error
+        )
     assert len(error.value.failures) == 1
     assert "1 of 3 parallel task(s) failed" in str(error.value)
 
@@ -118,7 +150,9 @@ def test_replay_filters_by_thread_log_level(runner, robot_logger):
 
 
 def test_remove_passing_logs_skips_passing_calls(runner, robot_logger):
-    runner.run_parallel_scenarios("Fail On Two", "Fake", for_loop_iterable=[1, 2], remove_passing_logs=True)
+    runner.run_parallel_scenarios(
+        "Fail On Two", "Fake", for_loop_iterable=[1, 2], remove_passing_logs=True, fail_on_error=False
+    )
     replayed = " ".join(msg for _, msg in robot_logger.messages)
     assert "Item: 1" not in replayed
     assert "Item: 2" in replayed
