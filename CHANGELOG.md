@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-11
+
 ### Changed
 - **Breaking: a failed call now fails `Run Parallel Scenarios`.** When any
   call raises, the keyword still waits for every other call and replays all
