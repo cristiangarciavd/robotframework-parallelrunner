@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-24
+
 ### Fixed
 - **Messages logged at `DEBUG`, `TRACE` or `HTML` from the threads were lost.**
   Only `INFO`, `WARN` and `ERROR` were replayed into the log; any other level
