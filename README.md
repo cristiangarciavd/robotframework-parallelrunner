@@ -121,7 +121,7 @@ Concretely:
   that needs to do the same kind of work many times (loop over a list of IDs,
   or repeat something N times) — how do I parallelize the body of that loop
   without corrupting the log or needing to merge anything?" It uses a
-  `ThreadPoolExecutor` inside a single process, and produces one
+  pool of threads inside a single process, and produces one
   already-merged, already-ordered log for that test case.
 - Because ParallelRunner uses **threads**, not processes, it shares memory and
   is subject to the GIL — it is a good fit for **I/O-bound** work (network
@@ -196,9 +196,11 @@ Things to keep in mind:
   made thread-safe for you; your own keyword's side effects are not. If it
   writes to a shared variable, file, or object without a lock, running it
   concurrently can race the same way any multi-threaded code can.
-- **You need per-item retries or a timeout.** Not implemented yet (see
-  [ROADMAP.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/ROADMAP.md)) — one hung call currently blocks the whole batch
-  from returning.
+- **You need per-item retries or a per-item timeout.** Not implemented yet
+  (see [ROADMAP.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/ROADMAP.md)). A Robot `[Timeout]` on the test or keyword does
+  interrupt the whole batch when it expires and replays the logs collected so
+  far, but calls that are already running can't be stopped: they keep running
+  in the background until they return.
 - **You need process-level isolation** (a crash in one call shouldn't be
   able to affect another) or cross-machine parallelism — that's pabot's
   domain, not this library's.
@@ -208,7 +210,7 @@ Things to keep in mind:
 ```
 robotframework-parallelrunner/
 ├── src/ParallelRunner/     # The installable library (do not depend on internals prefixed with `_`)
-├── examples/               # Example libraries used by the tests, plus the pabot timing demo
+├── examples/               # Example libraries used by the tests, plus the pabot and log levels demos
 ├── atest/                  # Robot Framework acceptance suites
 ├── utest/                  # pytest unit tests
 ├── docs/                   # INSTALLATION, QUICKSTART, API_REFERENCE, generated keyword docs

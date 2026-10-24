@@ -21,7 +21,6 @@ ${LIB}            examples.order_check.order_check_client.OrderCheckClient
 ${MIXED_ERROR}    ParallelTaskError: 2 of 5 parallel task(s) failed:
 ...               item='A-2-missing': Order A-2-missing not found;
 ...               item='A-4-missing': Order A-4-missing not found
-...               separator=${SPACE}
 
 
 *** Test Cases ***

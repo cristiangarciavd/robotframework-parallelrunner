@@ -4,7 +4,7 @@ This directory demonstrates how to adapt projects with custom logging formats to
 
 ## Overview
 
-`ParallelRunner` uses standard log levels ("INFO", "WARN", "ERROR"), but existing projects may use custom logging formats (e.g., severity codes: `sv=1, sv=2, sv=3`).
+`ParallelRunner` uses Robot Framework's log levels ("TRACE", "DEBUG", "INFO", "HTML", "WARN", "ERROR"), but existing projects may use custom logging formats (e.g., severity codes: `sv=1, sv=2, sv=3`).
 
 The key insight: **Create a local wrapper function that converts standard levels to your custom format**. This way, your method code remains identical regardless of whether it's called directly or in parallel.
 

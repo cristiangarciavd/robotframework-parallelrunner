@@ -8,10 +8,11 @@ could reasonably be added next.
 ### Done
 
 **Core functionality**
-- `ParallelRunner` with `ThreadPoolExecutor`-based execution
+- `ParallelRunner` with thread-pool-based execution (own daemon worker threads since 0.3.1)
 - Thread-safe logging via buffer + sequential replay (`_execute_and_capture` / `_replay_logs`)
 - Support for `for_loop_iterable` and `repeat`
-- Log filtering by level (`thread_log_level`)
+- Log filtering by level (`thread_log_level`), every Robot level (TRACE to ERROR, HTML, CONSOLE) since 0.3.1
+- A Robot `[Timeout]` interrupts the batch and replays the partial logs (0.3.1)
 - Handling of `sv=0` / `"IGNORE"` level logs
 - Results collected in **call order** (`results[i]` matches `for_loop_iterable[i]`
   / repeat index `i`), not `as_completed` completion order
@@ -91,6 +92,11 @@ These are possible directions, not commitments. Contributions welcome — see
 - **Retry mechanism** for individual failed tasks within `run_parallel_scenarios`
   (e.g. `retries=N`, `retry_backoff=...`).
 - **Per-task timeout** so a single hung item doesn't stall the whole batch.
+  (A Robot `[Timeout]` already interrupts the whole batch since 0.3.1; a
+  per-task timeout would fail only the hung item and let the others finish.)
+- **Cooperative cancellation**: hand the keyword a `threading.Event` it can
+  check, so calls still running after a `[Timeout]` can stop early instead of
+  finishing in the background.
 - **Richer result aggregation**, e.g. a summary object/keyword (`Get Parallel Summary`)
   instead of only the raw list of per-item dicts.
 - **Structured (JSON) logging** as an alternative to the current text-based replay,

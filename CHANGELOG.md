@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Messages logged at `DEBUG`, `TRACE` or `HTML` from the threads were lost.**
+  Only `INFO`, `WARN` and `ERROR` were replayed into the log; any other level
+  passed the filter but was never written, without any warning, even with
+  `--loglevel TRACE`. Every Robot Framework level is now replayed (`TRACE`,
+  `DEBUG`, `INFO`, `HTML`, `CONSOLE`, `WARN`, `ERROR`), and Robot's
+  `--loglevel` filters them like any other keyword's messages. Levels are
+  case-insensitive and Python `logging` names work too (`WARNING`,
+  `CRITICAL`, `FATAL`). A message with an unknown level is no longer dropped:
+  it is logged at `INFO` with the level as a prefix (`[VERBOSE] ...`), plus a
+  warning naming the level.
+- **A Robot `[Timeout]` only failed the test once the whole batch had
+  finished, and the batch's logs were lost.** On Windows the timeout could
+  not interrupt the keyword while it waited for the calls; on every platform
+  the keyword then waited for all running calls anyway. Now a test or keyword
+  timeout interrupts `Run Parallel Scenarios` when it expires: it replays the
+  logs of the finished calls, the partial logs of the calls still running
+  (with an `ERROR` saying they did not finish) and a summary line, and does
+  not start the calls that were still waiting. Calls already running can't be
+  killed and finish in the background.
+- A call that hangs no longer keeps the Robot process from exiting at the
+  end of the run: the worker threads are now daemon threads.
+- A named argument called `method` (forwarded to the target keyword) failed
+  with `TypeError: got multiple values for argument 'method'`.
+- A call that raised a `BaseException` that is not an `Exception` (e.g.
+  `SystemExit`) escaped from the keyword instead of being reported as a
+  failed call.
+- `atest/test_failures.robot` only passed on Robot Framework 7 (it used the
+  RF 7 `separator=` variable syntax). The acceptance tests now pass on Robot
+  Framework 5.0, 6.1 and 7.x (checked on Linux with Python 3.9, 3.11 and
+  3.13).
+
+### Changed
+- `thread_log_level` now defaults to `TRACE` (replay every level and let
+  Robot's `--loglevel` filter) instead of `INFO`, and also accepts `TRACE`
+  and `DEBUG`. Since only `INFO` and higher used to be replayed anyway, the
+  log is the same as before unless the run uses `--loglevel DEBUG` or
+  `TRACE`. An unknown `thread_log_level` is now ignored with a warning
+  instead of silently meaning `INFO`.
+- `Run Parallel Scenarios` runs the calls on its own daemon worker threads
+  (at most `ROBOT_THREAD_WORKERS`, never more than the number of calls)
+  instead of `concurrent.futures.ThreadPoolExecutor`. `ROBOT_THREAD_WORKERS`
+  below 1 fails with a clearer message.
+
+### Added
+- Library documentation sections "Log levels" and "Timeouts".
+- `examples/log_levels/`: an offline example library that logs at every
+  level, and an example suite comparing `--loglevel` and `thread_log_level`,
+  with a `[Timeout]` demo.
+- `atest/test_log_levels.robot` and `atest/test_timeouts.robot` (offline):
+  they run fixture suites from `atest/_fixtures/` in a separate Robot process
+  and check its output.xml - what really ends up in the log at each
+  `--loglevel`, and how long a timeout takes. 34 new unit tests (log levels,
+  interruption, the thread pool).
+
 ## [0.3.0] - 2026-10-11
 
 ### Changed

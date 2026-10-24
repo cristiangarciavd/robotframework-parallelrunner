@@ -35,6 +35,11 @@ ParallelRunner/
 │   │   ├── __init__.py
 │   │   └── order_check_client.py
 │   │
+│   ├── log_levels/            # Every log level and a [Timeout] demo (offline)
+│   │   ├── shipment_check_client.py
+│   │   ├── log_levels.robot   # Example suite: --loglevel vs thread_log_level, timeout
+│   │   └── README.md
+│   │
 │   ├── pabot_demo/            # Offline timing demo: robot vs pabot, with/without ParallelRunner
 │   │   ├── demo_client.py     # Simulated I/O (1 s sleep per item), no network
 │   │   ├── demo.resource      # Shared keyword; MODE=sequential|parallel
@@ -55,7 +60,13 @@ ParallelRunner/
 │   ├── test_custom_logger_with_env.robot  # Same, via ROBOT_LOGGER_MAPPER env var
 │   ├── test_logger_mapper.robot        # Which logger is really used (mapper vs default), offline
 │   ├── test_failures.robot             # Failed calls fail the keyword; `fail_on_error=False`, offline
-│   └── resources/MapperProbe.py        # Test helper: recording mapper + logging keyword
+│   ├── test_log_levels.robot           # Every level in the real log, vs --loglevel and thread_log_level, offline
+│   ├── test_timeouts.robot             # Robot [Timeout] interrupts the batch, partial logs, offline
+│   ├── _fixtures/                      # Suites run in a separate robot process by the two above
+│   │                                   # (skipped by `robot atest`: the name starts with "_")
+│   └── resources/
+│       ├── MapperProbe.py              # Test helper: recording mapper + logging keyword
+│       └── FixtureRunner.py            # Test helper: runs a fixture suite, reads its output.xml
 │
 ├── utest/                     # pytest unit tests (no Robot execution context needed)
 ├── docs/                      # User docs + generated keyword docs (ParallelRunner.html, GitHub Pages)
@@ -101,7 +112,7 @@ run_parallel_scenarios(
     for_loop_iterable: Optional[Iterable[Any]] = None,  # Items to iterate
     repeat: Optional[int] = None,  # Or repeat N times
     remove_passing_logs: bool = False,  # Hide logs for passing tasks
-    thread_log_level: str = "INFO",     # Filter by level: INFO, WARN, ERROR
+    thread_log_level: str = "TRACE",    # Min level replayed: TRACE (all), DEBUG, INFO, WARN, ERROR
     logger_mapper: Optional[Callable] = None,  # Adapter for custom loggers
     return_values_only: bool = False,  # Return a plain tuple of return values instead
     fail_on_error: bool = True,        # Fail if any call failed (False: return statuses instead)
@@ -118,7 +129,7 @@ run_parallel_scenarios(
 | `for_loop_iterable` | Iterable | Items to process in parallel | None |
 | `repeat` | int | Or number of times to repeat | None |
 | `remove_passing_logs` | bool | Skip logs for passing tasks | False |
-| `thread_log_level` | str | Min level to show: INFO, WARN, ERROR | "INFO" |
+| `thread_log_level` | str | Min level replayed: TRACE, DEBUG, INFO, WARN, ERROR. Robot's `--loglevel` still applies | "TRACE" |
 | `logger_mapper` | Callable | Custom logger adapter | None |
 | `return_values_only` | bool | Return a plain `tuple` of each call's return value (call order), instead of the list of result dicts. Raises `ParallelTaskError` on any failure. | False |
 | `fail_on_error` | bool | Raise `ParallelTaskError` if any call failed, after all calls finished and logs were replayed. `False` returns the result list with a `PASS`/`FAIL` status per call instead. | True |
@@ -128,12 +139,52 @@ run_parallel_scenarios(
 
 `results[i]` (or `return_values_only` tuple index `i`) always corresponds to
 `for_loop_iterable[i]`, or to repeat index `i` - **call order**, not
-`concurrent.futures.as_completed` completion order. Tasks are submitted to
-the executor up front (so they all start concurrently), and results are then
-collected by calling `.result()` on each future *in submission order*;
-`.result()` on an earlier future simply blocks until that specific task
-finishes, it does not force tasks to run one at a time. This makes direct
-indexing - and tuple-unpacking via `return_values_only` - safe to rely on.
+completion order. Every call has a slot in a result list created up front;
+the worker that runs call `i` writes its result to slot `i`, and the main
+thread waits for the slots in order. Waiting for slot `i` doesn't force calls
+to run one at a time: up to `ROBOT_THREAD_WORKERS` run at once, whatever
+order they finish in. This makes direct indexing - and tuple-unpacking via
+`return_values_only` - safe to rely on.
+
+### Thread pool and timeouts
+
+Each `Run Parallel Scenarios` call starts its own `min(ROBOT_THREAD_WORKERS,
+number of calls)` worker threads, which take call indexes from a queue until
+it is empty. The library does not use `concurrent.futures.ThreadPoolExecutor`
+(it did before 0.3.1), for two reasons that both come from Robot's
+`[Timeout]`:
+
+- On Windows, Robot raises the timeout in the main thread asynchronously
+  (`PyThreadState_SetAsyncExc`), and it is only delivered while that thread
+  runs Python code. A main thread blocked in `future.result()` (waiting on a
+  lock, in C) never received it until the whole batch was done. On POSIX the
+  timeout (`SIGALRM`) did interrupt the wait, but leaving the
+  `with ThreadPoolExecutor()` block then waited for every thread anyway. The
+  main thread now waits in short `time.sleep` steps, reading the result
+  slots without any lock (a lock held at the moment the asynchronous
+  exception arrives could stay locked forever).
+- `ThreadPoolExecutor` threads are not daemon threads: Python waits for them
+  at exit, so a call that hangs kept the Robot process alive after the run.
+  The workers are now daemon threads.
+
+When the wait is interrupted, the main thread tells the workers to stop
+taking new calls, replays the logs collected so far (finished calls as
+usual; running calls with their partial logs - the log buffers are created by
+the main thread, so it can read them - plus an `ERROR`; calls that never
+started are only counted in a summary line) and re-raises, so Robot reports
+the timeout. Calls already running can't be killed: they finish in the
+background.
+
+### Log levels
+
+The injected `_logger` keeps `(level, message)` as given; levels are checked
+when the logs are replayed. Every Robot level (`TRACE`, `DEBUG`, `INFO`,
+`HTML`, `CONSOLE`, `WARN`, `ERROR`, any case; `WARNING`/`CRITICAL`/`FATAL`
+as aliases) is written with `logger.write`, so Robot's `--loglevel` filters
+them like any keyword's messages; `thread_log_level` is an extra minimum on
+top. A message with an unknown level is written at `INFO` with the level as a
+prefix, plus one warning per unknown level. Before 0.3.1 only `INFO`, `WARN`
+and `ERROR` were written and every other level was dropped silently.
 
 ### Failure handling
 
@@ -160,7 +211,8 @@ def method_name(self, item_id: str, _logger: Optional[Callable] = None, **kwargs
     # Use injected logger or fallback
     log = _logger if _logger else default_log
     
-    # Log with standard levels: "INFO", "WARN", "ERROR"
+    # Any Robot level: "TRACE", "DEBUG", "INFO", "HTML", "CONSOLE", "WARN", "ERROR"
+    log(f"Request: {item_id}", "DEBUG")
     log("Starting processing", "INFO")
     log("Warning detected", "WARN")
     log("Error occurred", "ERROR")
@@ -322,10 +374,11 @@ Python's GIL (Global Interpreter Lock) limits CPU-bound parallelization. For hea
 
 ## Testing Coverage
 
-Acceptance tests: **52 test cases** across 8 Robot Framework suites in `atest/`.
-Unit tests: **38 pytest tests** in `utest/` (ordering, item selection, failure
-handling and `fail_on_error`, log replay filtering, mapper resolution and
-warnings, deprecated import path).
+Acceptance tests: **67 test cases** across 10 Robot Framework suites in `atest/`.
+Unit tests: **72 pytest tests** in `utest/` (ordering, item selection, failure
+handling and `fail_on_error`, every log level and its filtering, interruption
+by a timeout, the thread pool, mapper resolution and warnings, deprecated
+import path).
 
 | Suite | Cases | Coverage |
 |-------|-------|----------|
@@ -337,6 +390,8 @@ warnings, deprecated import path).
 | test_custom_logger_with_env.robot | 6 | Same, configured via `ROBOT_LOGGER_MAPPER` env var |
 | test_logger_mapper.robot | 5 | Which logger is actually used: explicit/env mapper paths receive the messages; bare or unresolvable names are ignored and logs stay buffered; fallback from an invalid argument to the env var. Offline |
 | test_failures.robot | 10 | Failed calls: the keyword fails after every call ran, with every failed item in the message; `fail_on_error=False` returns a status per item; `return_values_only` and `Get Result Values` always fail. Offline |
+| test_log_levels.robot | 10 | What really ends up in the log at every level (TRACE to ERROR, HTML) with `--loglevel` TRACE, DEBUG and the default, and with `thread_log_level`; runs `_fixtures/log_levels.robot` in a separate process. Offline |
+| test_timeouts.robot | 5 | A test or keyword `[Timeout]` fails right away, not when hung calls end; finished and partial logs replayed; next test unaffected; the process exits despite hung calls. Runs `_fixtures/timeouts.robot` in a separate process. Offline |
 
 Run all tests (after `poetry install`):
 
@@ -356,7 +411,8 @@ poetry run robot --pythonpath . atest/test_custom_logger.robot
 
 ✅ **DO:**
 - Accept `_logger` as optional parameter
-- Use standard levels: "INFO", "WARN", "ERROR"
+- Use Robot levels: "TRACE", "DEBUG", "INFO", "HTML", "WARN", "ERROR" (DEBUG/TRACE for detail that only shows with `--loglevel DEBUG`/`TRACE`)
+- Set timeouts on your own I/O (e.g. `requests.get(url, timeout=10)`): a Robot `[Timeout]` can't stop a call that is already running
 - Handle both parallel (_logger provided) and direct execution
 - Return meaningful results
 
@@ -396,7 +452,9 @@ poetry run robot --pythonpath . atest/test_custom_logger.robot
   `pabot --command python -m robot --end-command ...`
 
 ### Logs not appearing
-- Check `thread_log_level` setting (default "INFO")
+- Check `thread_log_level` setting (default "TRACE", every level)
+- `TRACE`/`DEBUG` messages need a low enough Robot `--loglevel` (e.g. `--loglevel DEBUG`)
+- A message with an unknown level is logged at `INFO` with a `[LEVEL]` prefix and a warning
 - Verify `remove_passing_logs` is not set to True
 - Ensure methods use `_logger` parameter
 - If a logger mapper is configured, its messages go to your own logging

@@ -12,8 +12,8 @@ from ParallelRunner import ParallelRunner
 
 - `ROBOT_LIBRARY_SCOPE = 'GLOBAL'`
 - Constructor takes no arguments. It reads the `ROBOT_THREAD_WORKERS`
-  environment variable (default `4`) to size its internal
-  `ThreadPoolExecutor`.
+  environment variable (default `4`): the maximum number of worker threads
+  per `Run Parallel Scenarios` call.
 
 As a Robot Framework library:
 
@@ -56,7 +56,7 @@ then fails with `ParallelTaskError` (unless `fail_on_error=False`).
 | `for_loop_iterable` | `Iterable[Any]` or `None` | No | `None` | Items to process, one task per item. If provided, this takes precedence and each item is passed as the first positional argument to `keyword`. |
 | `repeat` | `int` or `None` | No | `None` | If `for_loop_iterable` is not given, run the keyword this many times instead (`range(repeat)`); the loop index is passed as the first positional argument. An explicit `repeat=0` runs zero times (an empty result list), same as passing `for_loop_iterable=${EMPTY_LIST}` — it is not treated as "not given". If `repeat` itself is not given (`None`) and neither is `for_loop_iterable`, the keyword runs exactly once (`range(1)`). Use this when there's no pre-existing list of items — e.g. creating N independent test records in parallel, or firing N concurrent calls at one fixed endpoint — see `atest/test_repeat.robot` for worked examples of both. |
 | `remove_passing_logs` | `bool` | No | `False` | When `True`, only the log block for tasks with `status == "FAIL"` is replayed; passing tasks are skipped entirely (their result is still returned). |
-| `thread_log_level` | `str` | No | `"INFO"` | Minimum level to replay: one of `"INFO"`, `"WARN"`, `"ERROR"`. Uses the ordering `INFO(1) < WARN(2) < ERROR(3)`; messages below the threshold are dropped. `"IGNORE"`-level messages are always dropped regardless of this setting. |
+| `thread_log_level` | `str` | No | `"TRACE"` | Minimum level to replay: `"TRACE"` (every message), `"DEBUG"`, `"INFO"`, `"WARN"` or `"ERROR"` (any case; `"WARNING"` works too). Ordering `TRACE < DEBUG < INFO = HTML = CONSOLE < WARN < ERROR`; messages below the threshold are not replayed. Robot's own `--loglevel` still applies on top, so `TRACE`/`DEBUG` messages need e.g. `--loglevel DEBUG` to show up. `"IGNORE"`-level messages are always dropped. An unknown value is ignored with a warning (every level is replayed). Before 0.3.1 the default was `"INFO"` and only `INFO`/`WARN`/`ERROR` messages were ever replayed. |
 | `logger_mapper` | callable, `str`, or `None` | No | `None` | Custom logger adapter with signature `mapper(msg: str, level: str) -> None`. May be passed as a callable, or as a string module path (`"package.module.function"`) which is imported dynamically. Bare names without a module path (e.g. `"custom_logger_adapter"`) are not supported. A value that can't be resolved (bare name, module that can't be imported, missing or non-callable attribute) is ignored with a warning in the log, and the library then falls back to the `ROBOT_LOGGER_MAPPER` environment variable (see below). If neither resolves, logs are captured internally and replayed through `robot.api.logger`. A mapper's messages are not buffered or replayed, so `thread_log_level` and `remove_passing_logs` don't apply to them; it is called from several threads at once and must be thread-safe. |
 | `return_values_only` | `bool` | No | `False` | When `True`, return a plain `tuple` of each call's return value - in call order - instead of the list of result dictionaries. Raises `ParallelTaskError` if any task failed (there is no meaningful value to put in its slot). This is the natural pairing with `repeat`: since there's no input list to zip results against, unpacking directly into N variables is often more convenient than indexing into a list of dicts - e.g. `${id1}    ${id2}    ${id3}=    Run Parallel Scenarios    ...    repeat=3    return_values_only=True`. Equivalent to calling `Get Result Values` on the default (dict-list) return value. |
 | `fail_on_error` | `bool` | No | `True` | When `True`, raise `ParallelTaskError` if any task failed, so the keyword (and the test) fails. It is raised only after every task has finished and all logs have been replayed, and its message lists each failed item and its error. When `False`, return the result list anyway: failed tasks have `status == "FAIL"` (and their error is logged at `ERROR` level), and checking them is up to the caller, e.g. `Should Be Equal    ${results}[1][status]    PASS`. Has no effect with `return_values_only=True`, which always raises on a failed task. Before 0.3.0 the keyword behaved as if this were `False`. |
@@ -92,7 +92,7 @@ value, in the same call order described above. Raises `ParallelTaskError`
 
 | Variable | Effect |
 |---|---|
-| `ROBOT_THREAD_WORKERS` | Number of worker threads used by the internal `ThreadPoolExecutor`. Default: `4`. Read once, at `ParallelRunner.__init__`. |
+| `ROBOT_THREAD_WORKERS` | Maximum number of worker threads per `Run Parallel Scenarios` call (daemon threads, started per call). Default: `4`. Must be at least 1. Read once, at `ParallelRunner.__init__`. |
 | `ROBOT_LOGGER_MAPPER` | Global default for `logger_mapper` when the parameter is not passed explicitly. Must be a dotted `module.function` path (e.g. `examples.custom_logger.custom_logging_mapper.custom_logger_adapter`); a bare name is ignored with a warning. It must be a real environment variable (shell, or `Set Environment Variable` in a Suite Setup): a Robot variable given with `--variable` is not read. A resolvable `logger_mapper` argument always takes precedence over this variable. |
 
 ### Method contract for `keyword`
@@ -102,7 +102,7 @@ Any method targeted by `run_parallel_scenarios` should accept:
 ```python
 def method_name(self, item, _logger: Optional[Callable] = None, **kwargs):
     log = _logger if _logger else default_log
-    log("message", "INFO")   # or "WARN" / "ERROR" / "IGNORE"
+    log("message", "INFO")   # or "TRACE" / "DEBUG" / "HTML" / "CONSOLE" / "WARN" / "ERROR" / "IGNORE"
     return result
 ```
 
@@ -173,8 +173,11 @@ API, but documented here for maintainers:
 - `_resolve_mapper(mapper, source)` - normalizes a callable-or-`module.function` mapper into a callable; returns `None` when nothing was given, and logs a warning (naming `source`) when a given value can't be resolved.
 - `_load_mapper_from_environment()` - reads and resolves `ROBOT_LOGGER_MAPPER`.
 - `_get_library_instance_owning_keyword(keyword_name, library)` - resolves the Robot Framework library instance and validates that it has the target method.
-- `_execute_and_capture(method, item, logger_mapper, **kwargs)` - worker-thread entry point; buffers logs and captures pass/fail results.
-- `_replay_logs(results, remove_passing_logs, thread_log_level)` - replays buffered logs sequentially through `robot.api.logger`, applying filtering.
+- `_resolve_thread_log_level(thread_log_level)` - turns `thread_log_level` into a numeric minimum; warns on an unknown value.
+- `_run_in_threads(method, items, logger_mapper, remove_passing_logs, min_level, kwargs)` - starts the daemon worker threads, waits for the results in call order (in short sleeps, so a Robot `[Timeout]` can interrupt it), and on interruption stops new calls and replays the partial logs.
+- `_replay_interrupted(...)` - builds the partial results after an interruption and replays them, with a summary line.
+- `_execute_and_capture(method, item, logger_mapper, log_buffer, kwargs)` - worker-thread entry point; buffers logs into `log_buffer` (created by the main thread) and captures pass/fail results. Catches `BaseException`, so a call always produces a result.
+- `_replay_logs(results, remove_passing_logs, min_level)` - replays buffered logs sequentially with `robot.api.logger.write`, applying filtering.
 
 ## Examples
 
