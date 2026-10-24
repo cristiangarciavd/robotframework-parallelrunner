@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-24
+
 ### Added
 - **`call_timeout` parameter on `Run Parallel Scenarios`**: the maximum time
   each call may run, in Robot's time format (`call_timeout=10s`). A call
