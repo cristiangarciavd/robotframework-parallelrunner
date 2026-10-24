@@ -1,4 +1,4 @@
-# Log levels and timeouts
+# Log levels, timeouts and cancellation
 
 `ShipmentCheckClient` (in `shipment_check_client.py`) checks a batch of
 shipments in parallel and logs at every Robot Framework level, so you can see
@@ -11,6 +11,11 @@ deterministic: the shipment id decides what happens.
 | `late` | Same, plus a `WARN`. |
 | `lost` | Same, plus an `ERROR`, then fails. |
 | `stuck` | Hangs for `stuck_seconds` (default 60) before answering. |
+
+`Track Shipment` polls a shipment a few times until it is delivered; a
+`stuck` shipment is never delivered. It declares `_cancelled`, so it stops
+polling as soon as ParallelRunner cancels it (`call_timeout` or a Robot
+`[Timeout]`). `Get Cancelled Shipments` lists the ones that stopped that way.
 
 ## Run it
 
@@ -39,6 +44,14 @@ robot --pythonpath . --exclude fails-on-purpose examples/log_levels/log_levels.r
   request lines even with `--loglevel TRACE`.
 - **Only The Logs Of Failed Calls**: `remove_passing_logs=True` keeps only the
   lost shipment, with everything it logged before failing.
+- **A Call Timeout Fails Only The Hanging Call**: with `call_timeout=1s`,
+  `S-3-stuck` fails after 1 second ("Timed out after 1 second", with its
+  partial logs) and the other shipments pass. Unlike a Robot `[Timeout]`,
+  this failure can be handled - here with `fail_on_error=False`.
+- **A Cancelled Call Stops Early**: `T-2-stuck` would poll forever; when its
+  call timeout expires, `_cancelled` is set and it logs "Stopped tracking
+  shipment T-2-stuck: cancelled" (in the background, after the keyword
+  returned) instead of running on.
 - **A Timeout Stops Waiting For A Hanging Call** (fails on purpose): the test
   fails after its 2-second `[Timeout]`, not after the 60 seconds
   `S-3-stuck` hangs for. The log shows a summary line ("1 call(s) finished,
@@ -49,8 +62,10 @@ robot --pythonpath . --exclude fails-on-purpose examples/log_levels/log_levels.r
 ## Levels in your own keyword
 
 ```python
+from ParallelRunner import log_to_robot
+
 def check_something(self, item, _logger=None, **kwargs):
-    log = _logger or (lambda msg, level="INFO": logger.write(msg, level))
+    log = _logger or log_to_robot   # for direct calls: accepts the same levels
     log("starting")                       # INFO (the default)
     log(f"request: {payload}", "TRACE")
     log(f"response: {body}", "DEBUG")
@@ -64,3 +79,20 @@ def check_something(self, item, _logger=None, **kwargs):
 Levels are case-insensitive, and Python `logging` names work too (`WARNING`,
 `CRITICAL`). A message with any other level is still logged, at `INFO` with
 the level as a prefix, plus a warning that names the unknown level.
+
+## A keyword that can be cancelled
+
+```python
+def track_something(self, item, _logger=None, _cancelled=None):
+    while not done(item):
+        # Like time.sleep(1), but wakes up as soon as the call is cancelled.
+        if _cancelled is not None and _cancelled.wait(1):
+            _logger(f"Stopped tracking {item}: cancelled", "WARN")
+            return None
+    return "done"
+```
+
+`_cancelled` is only passed to keywords that declare it, and it is set when
+the call exceeds `call_timeout` or a Robot `[Timeout]` interrupts the batch.
+It can't interrupt a call blocked in a single operation (e.g. a network
+request without its own timeout).

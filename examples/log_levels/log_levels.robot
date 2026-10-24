@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation     Log levels and timeouts with ParallelRunner. Offline.
+Documentation     Log levels, timeouts and cancellation with ParallelRunner. Offline.
 ...
 ...               Run it with every level visible:
 ...               robot --pythonpath . --loglevel TRACE examples/log_levels/log_levels.robot
@@ -44,6 +44,24 @@ Only The Logs Of Failed Calls
     ...    for_loop_iterable=${{ $SHIPMENTS + ["S-5-lost"] }}
     ...    remove_passing_logs=True    fail_on_error=False
     Should Be Equal    ${results}[4][status]    FAIL
+
+A Call Timeout Fails Only The Hanging Call
+    [Documentation]    call_timeout=1s: S-3-stuck fails after 1 second with
+    ...    "Timed out after 1 second" and its partial logs; the others pass.
+    ...    Unlike a Robot [Timeout], the failure can be handled.
+    ${results}=    Run Parallel Scenarios    keyword=Check Shipment    library=${LIB}
+    ...    for_loop_iterable=${{ ["S-1", "S-2-late", "S-3-stuck"] }}
+    ...    call_timeout=1s    fail_on_error=False
+    Should Be Equal    ${results}[2][error]    Timed out after 1 second
+
+A Cancelled Call Stops Early
+    [Documentation]    Track Shipment declares `_cancelled`, so when the call
+    ...    timeout expires it stops polling ("Stopped tracking ...: cancelled")
+    ...    instead of running in the background forever.
+    Run Parallel Scenarios    keyword=Track Shipment    library=${LIB}
+    ...    for_loop_iterable=${{ ["T-1", "T-2-stuck"] }}    call_timeout=1s    fail_on_error=False
+    ${cancelled}=    Get Cancelled Shipments    expected=1
+    Should Be Equal    ${cancelled}    ${{ ["T-2-stuck"] }}
 
 A Timeout Stops Waiting For A Hanging Call
     [Documentation]    Fails on purpose after 2 seconds, not after the 60

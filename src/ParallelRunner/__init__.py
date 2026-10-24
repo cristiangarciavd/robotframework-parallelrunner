@@ -13,7 +13,7 @@ Keyword documentation:
 https://cristiangarciavd.github.io/robotframework-parallelrunner/ParallelRunner.html
 """
 
-from .parallel_library import ParallelLibrary, ParallelRunner, ParallelTaskError
+from .parallel_library import ParallelLibrary, ParallelRunner, ParallelTaskError, log_to_robot
 from .version import __version__
 
-__all__ = ["ParallelRunner", "ParallelLibrary", "ParallelTaskError", "__version__"]
+__all__ = ["ParallelRunner", "ParallelLibrary", "ParallelTaskError", "log_to_robot", "__version__"]

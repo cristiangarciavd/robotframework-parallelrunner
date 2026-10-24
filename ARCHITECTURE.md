@@ -62,10 +62,13 @@ ParallelRunner/
 │   ├── test_failures.robot             # Failed calls fail the keyword; `fail_on_error=False`, offline
 │   ├── test_log_levels.robot           # Every level in the real log, vs --loglevel and thread_log_level, offline
 │   ├── test_timeouts.robot             # Robot [Timeout] interrupts the batch, partial logs, offline
+│   ├── test_call_timeout.robot         # call_timeout and _cancelled, offline
+│   ├── test_keyword_calls.robot        # Argument conversion like a direct call, @keyword names, offline
 │   ├── _fixtures/                      # Suites run in a separate robot process by the two above
 │   │                                   # (skipped by `robot atest`: the name starts with "_")
 │   └── resources/
 │       ├── MapperProbe.py              # Test helper: recording mapper + logging keyword
+│       ├── KeywordProbe.py             # Test helper: typed arguments, a @keyword custom name
 │       └── FixtureRunner.py            # Test helper: runs a fixture suite, reads its output.xml
 │
 ├── utest/                     # pytest unit tests (no Robot execution context needed)
@@ -116,6 +119,7 @@ run_parallel_scenarios(
     logger_mapper: Optional[Callable] = None,  # Adapter for custom loggers
     return_values_only: bool = False,  # Return a plain tuple of return values instead
     fail_on_error: bool = True,        # Fail if any call failed (False: return statuses instead)
+    call_timeout=None,                 # Max time per call ("10s"); a hung call fails alone
     **kwargs: Any              # Extra args passed to method
 ) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]
 ```
@@ -133,6 +137,7 @@ run_parallel_scenarios(
 | `logger_mapper` | Callable | Custom logger adapter | None |
 | `return_values_only` | bool | Return a plain `tuple` of each call's return value (call order), instead of the list of result dicts. Raises `ParallelTaskError` on any failure. | False |
 | `fail_on_error` | bool | Raise `ParallelTaskError` if any call failed, after all calls finished and logs were replayed. `False` returns the result list with a `PASS`/`FAIL` status per call instead. | True |
+| `call_timeout` | str/float | Max time per call in Robot time format; a call still running after it fails with `Timed out after ...` and the others keep running | None |
 | `**kwargs` | Any | Extra args for method | - |
 
 ### Result ordering
@@ -174,6 +179,38 @@ the main thread, so it can read them - plus an `ERROR`; calls that never
 started are only counted in a summary line) and re-raises, so Robot reports
 the timeout. Calls already running can't be killed: they finish in the
 background.
+
+### Call timeouts and cancellation
+
+With `call_timeout`, the main thread also checks how long each running call
+has been running (workers write `started_at[i]` when call `i` starts). A
+call over the limit gets a `FAIL` result built from a copy of its log buffer
+plus an `ERROR`, and a new worker thread is started (if calls are still
+waiting) to take the place of the one that is stuck, so the batch keeps
+running `ROBOT_THREAD_WORKERS` calls at a time.
+
+The worker of a timed-out call may still return a moment later. To decide
+without a lock which outcome counts, both sides claim the call with
+`claims.setdefault(i, ...)` (atomic): the worker after its call returns, the
+main thread when the limit is exceeded. The first claim wins. A worker that
+loses stops (it doesn't take new calls - its replacement does), so no more
+than `ROBOT_THREAD_WORKERS` calls are ever running except the abandoned ones.
+
+A method that declares `_cancelled` gets a `threading.Event` per call. The
+main thread sets it when the call times out, and sets all of them when the
+batch is interrupted (Robot `[Timeout]`), so cooperative keywords stop
+instead of running in the background.
+
+### Argument conversion and keyword lookup
+
+The target method is called directly, not through Robot, so the library
+does what Robot would do for a direct call: it converts arguments with
+Robot's own `PythonArgumentParser(...).convert` (type hints, then default
+value types). Named arguments are converted once, before any thread starts;
+an item is converted only when it is a string (as a value from a test file
+would be), and the result keeps the original item. The method is found by
+name or by a `@keyword("...")` custom name (`robot_name`), comparing names
+like Robot (ignoring case, spaces and underscores).
 
 ### Log levels
 
@@ -374,11 +411,12 @@ Python's GIL (Global Interpreter Lock) limits CPU-bound parallelization. For hea
 
 ## Testing Coverage
 
-Acceptance tests: **67 test cases** across 10 Robot Framework suites in `atest/`.
-Unit tests: **72 pytest tests** in `utest/` (ordering, item selection, failure
+Acceptance tests: **82 test cases** across 12 Robot Framework suites in `atest/`.
+Unit tests: **116 pytest tests** in `utest/` (ordering, item selection, failure
 handling and `fail_on_error`, every log level and its filtering, interruption
-by a timeout, the thread pool, mapper resolution and warnings, deprecated
-import path).
+by a timeout, `call_timeout` and `_cancelled`, argument conversion and keyword
+lookup, the thread pool, mapper resolution and warnings, deprecated import
+path).
 
 | Suite | Cases | Coverage |
 |-------|-------|----------|
@@ -391,7 +429,9 @@ import path).
 | test_logger_mapper.robot | 5 | Which logger is actually used: explicit/env mapper paths receive the messages; bare or unresolvable names are ignored and logs stay buffered; fallback from an invalid argument to the env var. Offline |
 | test_failures.robot | 10 | Failed calls: the keyword fails after every call ran, with every failed item in the message; `fail_on_error=False` returns a status per item; `return_values_only` and `Get Result Values` always fail. Offline |
 | test_log_levels.robot | 10 | What really ends up in the log at every level (TRACE to ERROR, HTML) with `--loglevel` TRACE, DEBUG and the default, and with `thread_log_level`; runs `_fixtures/log_levels.robot` in a separate process. Offline |
-| test_timeouts.robot | 5 | A test or keyword `[Timeout]` fails right away, not when hung calls end; finished and partial logs replayed; next test unaffected; the process exits despite hung calls. Runs `_fixtures/timeouts.robot` in a separate process. Offline |
+| test_timeouts.robot | 6 | A test or keyword `[Timeout]` fails right away, not when hung calls end; finished and partial logs replayed; next test unaffected; cooperative calls are cancelled; the process exits despite hung calls. Runs `_fixtures/timeouts.robot` in a separate process. Offline |
+| test_call_timeout.robot | 8 | `call_timeout`: only the hung call fails, the others return their results, partial logs kept, the failure can be handled, `_cancelled` stops cooperative calls, time format, invalid values. Offline |
+| test_keyword_calls.robot | 6 | Arguments converted like a direct call (named always, string items), conversion errors, `@keyword` custom names, name normalization. Offline |
 
 Run all tests (after `poetry install`):
 

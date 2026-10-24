@@ -60,6 +60,7 @@ then fails with `ParallelTaskError` (unless `fail_on_error=False`).
 | `logger_mapper` | callable, `str`, or `None` | No | `None` | Custom logger adapter with signature `mapper(msg: str, level: str) -> None`. May be passed as a callable, or as a string module path (`"package.module.function"`) which is imported dynamically. Bare names without a module path (e.g. `"custom_logger_adapter"`) are not supported. A value that can't be resolved (bare name, module that can't be imported, missing or non-callable attribute) is ignored with a warning in the log, and the library then falls back to the `ROBOT_LOGGER_MAPPER` environment variable (see below). If neither resolves, logs are captured internally and replayed through `robot.api.logger`. A mapper's messages are not buffered or replayed, so `thread_log_level` and `remove_passing_logs` don't apply to them; it is called from several threads at once and must be thread-safe. |
 | `return_values_only` | `bool` | No | `False` | When `True`, return a plain `tuple` of each call's return value - in call order - instead of the list of result dictionaries. Raises `ParallelTaskError` if any task failed (there is no meaningful value to put in its slot). This is the natural pairing with `repeat`: since there's no input list to zip results against, unpacking directly into N variables is often more convenient than indexing into a list of dicts - e.g. `${id1}    ${id2}    ${id3}=    Run Parallel Scenarios    ...    repeat=3    return_values_only=True`. Equivalent to calling `Get Result Values` on the default (dict-list) return value. |
 | `fail_on_error` | `bool` | No | `True` | When `True`, raise `ParallelTaskError` if any task failed, so the keyword (and the test) fails. It is raised only after every task has finished and all logs have been replayed, and its message lists each failed item and its error. When `False`, return the result list anyway: failed tasks have `status == "FAIL"` (and their error is logged at `ERROR` level), and checking them is up to the caller, e.g. `Should Be Equal    ${results}[1][status]    PASS`. Has no effect with `return_values_only=True`, which always raises on a failed task. Before 0.3.0 the keyword behaved as if this were `False`. |
+| `call_timeout` | `str`, `float` or `None` | No | `None` | Maximum time each call may run, in Robot's time format (`"10s"`, `"1 minute 30 seconds"`, `2.5`). A call still running after it becomes a `FAIL` result with error `Timed out after <time>` and its partial logs, while the other calls keep running; a new worker thread replaces the abandoned one. The timed-out call can't be killed: it keeps running in the background, unless it declares `_cancelled` (see the method contract). `None`, `""` or `"NONE"`: no limit. Zero, negative or unparsable values fail the keyword before anything runs. Not forwarded to the keyword (added in 0.4.0: a keyword argument named `call_timeout` is no longer forwarded). |
 | `**kwargs` | `Any` | No | - | Any additional keyword arguments are forwarded verbatim to every call of `keyword`. |
 
 ### Return value
@@ -92,7 +93,7 @@ value, in the same call order described above. Raises `ParallelTaskError`
 
 | Variable | Effect |
 |---|---|
-| `ROBOT_THREAD_WORKERS` | Maximum number of worker threads per `Run Parallel Scenarios` call (daemon threads, started per call). Default: `4`. Must be at least 1. Read once, at `ParallelRunner.__init__`. |
+| `ROBOT_THREAD_WORKERS` | Maximum number of calls running at once per `Run Parallel Scenarios` call (daemon threads, started per call; a timed-out call's thread is replaced). Default: `4`. A value that is not a whole number of at least 1 is ignored with a warning. Read once, at `ParallelRunner.__init__`. |
 | `ROBOT_LOGGER_MAPPER` | Global default for `logger_mapper` when the parameter is not passed explicitly. Must be a dotted `module.function` path (e.g. `examples.custom_logger.custom_logging_mapper.custom_logger_adapter`); a bare name is ignored with a warning. It must be a real environment variable (shell, or `Set Environment Variable` in a Suite Setup): a Robot variable given with `--variable` is not read. A resolvable `logger_mapper` argument always takes precedence over this variable. |
 
 ### Method contract for `keyword`
@@ -100,11 +101,29 @@ value, in the same call order described above. Raises `ParallelTaskError`
 Any method targeted by `run_parallel_scenarios` should accept:
 
 ```python
-def method_name(self, item, _logger: Optional[Callable] = None, **kwargs):
-    log = _logger if _logger else default_log
+from ParallelRunner import log_to_robot
+
+def method_name(self, item, _logger: Optional[Callable] = None, _cancelled=None, **kwargs):
+    log = _logger or log_to_robot
     log("message", "INFO")   # or "TRACE" / "DEBUG" / "HTML" / "CONSOLE" / "WARN" / "ERROR" / "IGNORE"
     return result
 ```
+
+- Arguments are converted by the method's type hints and default values, as
+  in a direct call: named arguments always, the item only when it is a
+  string. An item that can't be converted fails that call without running
+  it; a named argument that can't be converted fails the keyword before any
+  call runs.
+- The method is found by name (`Verify Agent` -> `verify_agent`) or by a
+  custom name given with `@keyword("...")`, ignoring case, spaces and
+  underscores.
+- `_cancelled` is optional and only passed when the method declares it: a
+  `threading.Event` set when that call exceeds `call_timeout` or a Robot
+  `[Timeout]` interrupts the batch. Check it (or wait on it instead of
+  sleeping) to stop early.
+- `log_to_robot(msg, level="INFO")` (importable from `ParallelRunner`) is the
+  fallback logger for direct calls: same levels as the injected `_logger`,
+  where `robot.api.logger.write` fails on `IGNORE` or `WARNING`.
 
 - The first positional argument receives the current item (or repeat index).
 - `_logger` is injected automatically by `ParallelRunner` — inside a worker
@@ -173,10 +192,15 @@ API, but documented here for maintainers:
 - `_resolve_mapper(mapper, source)` - normalizes a callable-or-`module.function` mapper into a callable; returns `None` when nothing was given, and logs a warning (naming `source`) when a given value can't be resolved.
 - `_load_mapper_from_environment()` - reads and resolves `ROBOT_LOGGER_MAPPER`.
 - `_get_library_instance_owning_keyword(keyword_name, library)` - resolves the Robot Framework library instance and validates that it has the target method.
+- `_get_keyword_method(lib_instance, keyword_name)` / `_find_keyword_method(...)` - finds the method by name or `@keyword` custom name, ignoring case, spaces and underscores.
+- `_resolve_call_timeout(call_timeout)` - parses `call_timeout` (Robot time format) into seconds, or `None`.
+- `_converter_for(method)` - Robot's own argument conversion (`PythonArgumentParser(...).convert`) for the method, or `None` if its signature can't be parsed.
+- `_accepts_cancel_event(method)` - whether the method declares `_cancelled`.
 - `_resolve_thread_log_level(thread_log_level)` - turns `thread_log_level` into a numeric minimum; warns on an unknown value.
-- `_run_in_threads(method, items, logger_mapper, remove_passing_logs, min_level, kwargs)` - starts the daemon worker threads, waits for the results in call order (in short sleeps, so a Robot `[Timeout]` can interrupt it), and on interruption stops new calls and replays the partial logs.
+- `_run_in_threads(method, items, logger_mapper, remove_passing_logs, min_level, kwargs, call_timeout)` - converts the arguments, starts the daemon worker threads, waits for the results (in short sleeps, so a Robot `[Timeout]` can interrupt it), times out calls that exceed `call_timeout` (starting a replacement worker), and on interruption stops new calls, sets the `_cancelled` events and replays the partial logs.
+- `_timed_out_result(item, log_buffer, call_timeout)` - the `FAIL` result of a timed-out call.
 - `_replay_interrupted(...)` - builds the partial results after an interruption and replays them, with a summary line.
-- `_execute_and_capture(method, item, logger_mapper, log_buffer, kwargs)` - worker-thread entry point; buffers logs into `log_buffer` (created by the main thread) and captures pass/fail results. Catches `BaseException`, so a call always produces a result.
+- `_execute_and_capture(method, item, logger_mapper, log_buffer, kwargs, argument)` - worker-thread entry point (`argument` is the converted item the call receives, `item` what the result reports); buffers logs into `log_buffer` (created by the main thread) and captures pass/fail results. Catches `BaseException`, so a call always produces a result.
 - `_replay_logs(results, remove_passing_logs, min_level)` - replays buffered logs sequentially with `robot.api.logger.write`, applying filtering.
 
 ## Examples

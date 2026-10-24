@@ -40,9 +40,13 @@ contract:
 # my_project/my_client.py
 from typing import Callable, Optional
 
+from ParallelRunner import log_to_robot
+
 class MyClient:
     def process_item(self, item_id, _logger: Optional[Callable] = None, **kwargs):
-        log = _logger if _logger else print
+        # _logger is injected by Run Parallel Scenarios; log_to_robot is the
+        # fallback when the keyword is called directly.
+        log = _logger or log_to_robot
         log(f"Processing {item_id}", "INFO")
         if item_id == "bad":
             log(f"{item_id} failed validation", "ERROR")
@@ -133,5 +137,7 @@ result list before deciding whether to extract the values.
 - [API_REFERENCE.md](API_REFERENCE.md) - full parameter reference for `Run Parallel Scenarios`.
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) - how the log buffering/replay mechanism works internally.
 - `examples/custom_logger/` - adapting a project that already has its own custom/severity-based logger.
+- `examples/log_levels/` - every log level, `--loglevel` vs `thread_log_level`, `call_timeout` for a
+  call that hangs, and a keyword that stops early when cancelled (`_cancelled`).
 - `atest/` - more worked examples (warnings, errors, log-level filtering, custom loggers).
   `atest/test_failures.robot` shows every way of handling failed calls, offline.

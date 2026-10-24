@@ -13,6 +13,8 @@ could reasonably be added next.
 - Support for `for_loop_iterable` and `repeat`
 - Log filtering by level (`thread_log_level`), every Robot level (TRACE to ERROR, HTML, CONSOLE) since 0.3.1
 - A Robot `[Timeout]` interrupts the batch and replays the partial logs (0.3.1)
+- Per-call timeout (`call_timeout`) and cooperative cancellation (`_cancelled`) (0.4.0)
+- Arguments converted by type hints like a direct call; keywords found by `@keyword` names (0.4.0)
 - Handling of `sv=0` / `"IGNORE"` level logs
 - Results collected in **call order** (`results[i]` matches `for_loop_iterable[i]`
   / repeat index `i`), not `as_completed` completion order
@@ -68,10 +70,16 @@ could reasonably be added next.
   `ParallelTaskError` on failure), plus `test_logger_mapper.robot`
   (which logger is really used: mapper vs default buffered logger) and
   `test_failures.robot` (failed calls fail the keyword, `fail_on_error=False`;
-  offline)
-- 38 pytest unit tests under `utest/` (ordering, item selection, failure
-  handling, log replay filtering, mapper resolution and warnings, deprecated
-  import path)
+  offline), `test_log_levels.robot` and `test_timeouts.robot` (what really
+  reaches the log at each `--loglevel`, Robot `[Timeout]`; they run fixture
+  suites in a separate Robot process), `test_call_timeout.robot`
+  (`call_timeout`, `_cancelled`) and `test_keyword_calls.robot` (argument
+  conversion, `@keyword` names) - 82 acceptance tests in all
+- 116 pytest unit tests under `utest/` (ordering, item selection, failure
+  handling, every log level and its filtering, timeouts and cancellation,
+  argument conversion and keyword lookup, the thread pool, mapper resolution
+  and warnings, deprecated import path)
+- Acceptance tests pass on Robot Framework 5.0, 6.1 and 7.x
 
 **CI**
 - `.github/workflows/tests.yml`: installs with Poetry and runs the unit and
@@ -91,12 +99,6 @@ These are possible directions, not commitments. Contributions welcome — see
 
 - **Retry mechanism** for individual failed tasks within `run_parallel_scenarios`
   (e.g. `retries=N`, `retry_backoff=...`).
-- **Per-task timeout** so a single hung item doesn't stall the whole batch.
-  (A Robot `[Timeout]` already interrupts the whole batch since 0.3.1; a
-  per-task timeout would fail only the hung item and let the others finish.)
-- **Cooperative cancellation**: hand the keyword a `threading.Event` it can
-  check, so calls still running after a `[Timeout]` can stop early instead of
-  finishing in the background.
 - **Richer result aggregation**, e.g. a summary object/keyword (`Get Parallel Summary`)
   instead of only the raw list of per-item dicts.
 - **Structured (JSON) logging** as an alternative to the current text-based replay,

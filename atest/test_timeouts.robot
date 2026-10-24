@@ -66,10 +66,18 @@ The Next Test Runs Normally
     ${test}=    Get Fixture Test    ${RUN}[output]    Next Test Runs Normally
     Should Be Equal    ${test}[status]    PASS
 
+A Timeout Cancels Calls That Declare _cancelled
+    [Documentation]    The stuck Track Shipment calls would poll forever; the
+    ...    test timeout sets their `_cancelled` event and they stop.
+    ${test}=    Get Fixture Test    ${RUN}[output]    Test Timeout Cancels Cooperative Calls
+    Should Be Equal    ${test}[message]    Test timeout 1 second exceeded.
+    ${test}=    Get Fixture Test    ${RUN}[output]    Cancelled Calls Stopped
+    Should Be Equal    ${test}[status]    PASS    ${test}[message]
+
 Hanging Calls Do Not Keep Robot From Exiting
     [Documentation]    The stuck calls hang for 60 seconds, but the worker
     ...    threads are daemon threads: the process exits right away.
-    Should Be Equal As Integers    ${RUN}[rc]    2    Expected exactly the 2 timeout tests to fail.
+    Should Be Equal As Integers    ${RUN}[rc]    3    Expected exactly the 3 timeout tests to fail.
     Should Be True    ${RUN}[elapsed] < 30    The fixture run took ${RUN}[elapsed] s.
 
 

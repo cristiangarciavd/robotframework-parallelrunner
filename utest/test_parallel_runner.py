@@ -15,9 +15,10 @@ import types
 import warnings
 
 import pytest
+from robot.api.deco import keyword
 
 import ParallelRunner as package
-from ParallelRunner import ParallelLibrary, ParallelRunner, ParallelTaskError
+from ParallelRunner import ParallelLibrary, ParallelRunner, ParallelTaskError, log_to_robot
 from ParallelRunner import parallel_library
 from ParallelRunner.parallel_library import TimeoutExceeded
 
@@ -54,9 +55,31 @@ class FakeLibrary:
     def raise_system_exit(self, item, _logger=None):
         raise SystemExit("bye")
 
+    def typed(self, item: int, delay: float = 0.1, flag: bool = False, _logger=None):
+        return (item, delay, flag)
+
+    @keyword("Custom Named Keyword")
+    def _implementation_with_another_name(self, item, _logger=None):
+        return f"custom {item}"
+
+    def report_cancel_event(self, item, _logger=None, _cancelled=None):
+        return {"given": _cancelled is not None, "set": _cancelled is not None and _cancelled.is_set()}
+
+    def wait_cooperatively(self, seconds, _logger=None, _cancelled=None):
+        """Waits `seconds` in small steps, stopping early when cancelled."""
+        with self._lock:
+            self.started.append(seconds)
+        _logger(f"start {seconds}")
+        if _cancelled.wait(float(seconds)):
+            with self._lock:
+                self.cancelled.append(seconds)
+            return "cancelled"
+        return "done"
+
     def __init__(self):
         self.release = threading.Event()
         self.started = []
+        self.cancelled = []
         self._lock = threading.Lock()
         self._running = 0
         self.max_running = 0
@@ -574,3 +597,244 @@ def test_timeout_with_a_mapper_still_reports_the_unfinished_calls(runner, robot_
 def test_other_interruptions_name_the_exception(runner, robot_logger):
     run_interrupted(runner, error=KeyboardInterrupt, for_loop_iterable=[30])
     assert any("was interrupted (KeyboardInterrupt)" in msg for _, msg in robot_logger.messages)
+
+
+# --- call_timeout (0.4.0) ---
+
+
+TIMED_OUT_30 = "Call for item 30 timed out after 200 milliseconds (call_timeout); it keeps running in the background"
+
+
+def worker_threads_alive():
+    return [t for t in threading.enumerate() if t.name.startswith("ParallelRunner-worker")]
+
+
+def wait_until(condition, seconds=5):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if condition():
+            return True
+        time.sleep(0.01)
+    return condition()
+
+
+def test_call_timeout_fails_only_the_hung_call(runner, robot_logger):
+    start = time.monotonic()
+    with pytest.raises(ParallelTaskError) as error:
+        runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[0.01, 30, 0.02], call_timeout=0.2)
+    assert time.monotonic() - start < 2
+    assert str(error.value) == "1 of 3 parallel task(s) failed: item=30: Timed out after 200 milliseconds"
+
+
+def test_call_timeout_result_keeps_partial_logs(runner, robot_logger):
+    results = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[0.01, 30], call_timeout="200ms", fail_on_error=False
+    )
+    assert [r["status"] for r in results] == ["PASS", "FAIL"]
+    assert results[0]["result"] == 0.01
+    assert results[1]["error"] == "Timed out after 200 milliseconds"
+    assert results[1]["logs"] == [("INFO", "start 30"), ("ERROR", TIMED_OUT_30)]
+    assert ("ERROR", TIMED_OUT_30) in robot_logger.messages
+
+
+def test_late_logs_of_a_timed_out_call_are_not_added(runner, robot_logger, fake_library):
+    (result,) = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[30], call_timeout=0.2, fail_on_error=False
+    )
+    fake_library.release.set()
+    assert wait_until(lambda: not worker_threads_alive())
+    assert result["logs"] == [("INFO", "start 30"), ("ERROR", TIMED_OUT_30)]
+
+
+def test_a_new_worker_replaces_a_timed_out_one(runner, robot_logger, fake_library):
+    """With one worker, the calls after the hung one still run."""
+    runner.max_workers = 1
+    start = time.monotonic()
+    results = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[30, 0.01, 0.01], call_timeout=0.2, fail_on_error=False
+    )
+    assert time.monotonic() - start < 2
+    assert [r["status"] for r in results] == ["FAIL", "PASS", "PASS"]
+
+
+def test_an_abandoned_worker_stops_after_its_call(runner, robot_logger, fake_library, monkeypatch):
+    seen = started_threads(monkeypatch)
+    runner.max_workers = 2
+    runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[30, 30, 0.01, 0.01, 0.01], call_timeout=0.2, fail_on_error=False
+    )
+    # 2 workers + 1 replacement per timed-out call while calls were still waiting.
+    assert len(seen) == 4
+    fake_library.release.set()
+    assert wait_until(lambda: not worker_threads_alive())
+    # Every call ran exactly once: the abandoned workers took no new calls.
+    assert sorted(fake_library.started) == [0.01, 0.01, 0.01, 30, 30]
+
+
+def test_no_replacement_worker_when_nothing_is_left_to_run(runner, robot_logger, monkeypatch):
+    seen = started_threads(monkeypatch)
+    runner.max_workers = 2
+    runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[30, 30], call_timeout=0.2, fail_on_error=False)
+    assert len(seen) == 2
+
+
+def test_calls_finishing_around_the_timeout_are_counted_once(runner, robot_logger, fake_library):
+    """Stress the race between a call returning and its timeout: every call
+    ends up exactly once as PASS or as timed out, and every thread ends."""
+    random.seed(7)
+    durations = [round(random.uniform(0.03, 0.07), 3) for _ in range(60)]
+    runner.max_workers = 6
+    results = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=durations, call_timeout=0.05, fail_on_error=False
+    )
+    assert [r["item"] for r in results] == durations
+    for entry in results:
+        assert entry["status"] == "PASS" or entry["error"] == "Timed out after 50 milliseconds"
+    assert any(r["status"] == "PASS" for r in results) and any(r["status"] == "FAIL" for r in results)
+    fake_library.release.set()
+    assert wait_until(lambda: not worker_threads_alive())
+    assert sorted(fake_library.started) == sorted(durations)
+
+
+@pytest.mark.parametrize(
+    "value, seconds",
+    [(0.25, 0.25), ("0.25", 0.25), ("250ms", 0.25), ("1 minute 30 seconds", 90), ("2s", 2)],
+)
+def test_call_timeout_accepts_robot_time_format(value, seconds):
+    assert ParallelRunner._resolve_call_timeout(value) == seconds
+
+
+@pytest.mark.parametrize("value", [None, "", "None", "NONE"])
+def test_call_timeout_not_given_means_no_timeout(runner, robot_logger, value):
+    assert ParallelRunner._resolve_call_timeout(value) is None
+    results = runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[0.3], call_timeout=value)
+    assert results[0]["status"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "value, message",
+    [("soon", "Invalid call_timeout 'soon'"), ("0", "call_timeout must be positive"), (-1, "call_timeout must be positive")],
+)
+def test_invalid_call_timeout_fails_before_running_anything(runner, robot_logger, fake_library, value, message):
+    with pytest.raises(ValueError, match=message):
+        runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[0.01], call_timeout=value)
+    assert fake_library.started == []
+
+
+def test_call_timeout_is_not_forwarded_to_the_keyword(runner, robot_logger):
+    (value,) = runner.run_parallel_scenarios("Echo Item", "Fake", call_timeout="5s", return_values_only=True)
+    assert value == {"item": 0}
+
+
+# --- _cancelled (0.4.0) ---
+
+
+def test_cancel_event_only_given_to_keywords_that_declare_it(runner, robot_logger):
+    (with_param,) = runner.run_parallel_scenarios("Report Cancel Event", "Fake", return_values_only=True)
+    assert with_param == {"given": True, "set": False}
+    (echo,) = runner.run_parallel_scenarios("Echo Item", "Fake", return_values_only=True)
+    assert "_cancelled" not in echo
+
+
+def test_call_timeout_cancels_a_cooperative_call(runner, robot_logger, fake_library):
+    results = runner.run_parallel_scenarios(
+        "Wait Cooperatively", "Fake", for_loop_iterable=[30, 0.01], call_timeout=0.2, fail_on_error=False
+    )
+    assert [r["status"] for r in results] == ["FAIL", "PASS"]
+    assert results[1]["result"] == "done"
+    assert wait_until(lambda: fake_library.cancelled == [30], seconds=2)
+    assert wait_until(lambda: not worker_threads_alive())
+
+
+def test_robot_timeout_cancels_running_cooperative_calls(runner, robot_logger, fake_library):
+    timer = interrupt_main_thread(0.3)
+    try:
+        with pytest.raises(TimeoutExceeded):
+            runner.run_parallel_scenarios("Wait Cooperatively", "Fake", for_loop_iterable=[30, 30])
+    finally:
+        timer.cancel()
+    assert wait_until(lambda: fake_library.cancelled == [30, 30], seconds=2)
+    assert wait_until(lambda: not worker_threads_alive())
+
+
+# --- Keyword lookup and argument conversion (0.4.0) ---
+
+
+@pytest.mark.parametrize("name", ["Custom Named Keyword", "custom named keyword", "CustomNamedKeyword", "custom_named_keyword"])
+def test_keyword_with_a_custom_robot_name_is_found(runner, robot_logger, name):
+    assert runner.run_parallel_scenarios(name, "Fake", return_values_only=True) == ("custom 0",)
+
+
+@pytest.mark.parametrize("name", ["Echo Item", "echo_item", "ECHO ITEM", "EchoItem"])
+def test_keyword_names_ignore_case_spaces_and_underscores(runner, robot_logger, name):
+    assert runner.run_parallel_scenarios(name, "Fake", return_values_only=True) == ({"item": 0},)
+
+
+def test_unknown_keyword_is_an_error(runner, robot_logger):
+    runner._get_library_instance_owning_keyword = lambda keyword, library: FakeLibrary()
+    with pytest.raises(ValueError, match="Keyword 'No Such Keyword' not found"):
+        runner.run_parallel_scenarios("No Such Keyword", "Fake")
+
+
+def test_private_methods_are_not_keywords(runner, robot_logger):
+    with pytest.raises(ValueError, match="not found"):
+        runner.run_parallel_scenarios("Implementation With Another Name", "Fake")
+
+
+def test_named_arguments_are_converted_like_a_direct_call(runner, robot_logger):
+    (value,) = runner.run_parallel_scenarios(
+        "Typed", "Fake", for_loop_iterable=["7"], delay="0.5", flag="True", return_values_only=True
+    )
+    assert value == (7, 0.5, True)
+
+
+def test_string_items_are_converted_other_items_are_passed_as_they_are(runner, robot_logger):
+    results = runner.run_parallel_scenarios("Typed", "Fake", for_loop_iterable=["1", 2, 3.0])
+    assert [r["result"][0] for r in results] == [1, 2, 3.0]
+    assert [r["item"] for r in results] == ["1", 2, 3.0]  # the results keep the original items
+
+
+def test_item_that_cannot_be_converted_fails_only_that_call(runner, robot_logger):
+    results = runner.run_parallel_scenarios("Typed", "Fake", for_loop_iterable=["1", "x", "3"], fail_on_error=False)
+    assert [r["status"] for r in results] == ["PASS", "FAIL", "PASS"]
+    assert results[1]["error"] == "Argument 'item' got value 'x' that cannot be converted to integer."
+    assert ("ERROR", f"Thread failed for item x: {results[1]['error']}") in robot_logger.messages
+
+
+def test_named_argument_that_cannot_be_converted_fails_before_running(runner, robot_logger):
+    with pytest.raises(ValueError, match="Argument 'delay' got value 'slow' that cannot be converted to float"):
+        runner.run_parallel_scenarios("Typed", "Fake", repeat=2, delay="slow")
+
+
+# --- ROBOT_THREAD_WORKERS (0.4.0) ---
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-2", "1.5"])
+def test_invalid_workers_variable_warns_and_uses_the_default(robot_logger, monkeypatch, value):
+    monkeypatch.setenv("ROBOT_THREAD_WORKERS", value)
+    assert ParallelRunner().max_workers == 4
+    (warning,) = warnings_logged(robot_logger)
+    assert f"Ignoring ROBOT_THREAD_WORKERS {value!r}" in warning
+
+
+@pytest.mark.parametrize("value", ["", " "])
+def test_empty_workers_variable_uses_the_default_silently(robot_logger, monkeypatch, value):
+    monkeypatch.setenv("ROBOT_THREAD_WORKERS", value)
+    assert ParallelRunner().max_workers == 4
+    assert warnings_logged(robot_logger) == []
+
+
+# --- log_to_robot (0.4.0) ---
+
+
+def test_log_to_robot_accepts_the_same_levels_as_the_injected_logger(robot_logger):
+    for level in ("debug", "WARNING", "IGNORE", "VERBOSE", "HTML"):
+        log_to_robot(f"msg at {level}", level)
+    log_to_robot("default level")
+    assert robot_logger.messages == [
+        ("DEBUG", "msg at debug"),
+        ("WARN", "msg at WARNING"),
+        ("INFO", "[VERBOSE] msg at VERBOSE"),
+        ("HTML", "msg at HTML"),
+        ("INFO", "default level"),
+    ]

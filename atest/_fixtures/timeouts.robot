@@ -30,6 +30,17 @@ Next Test Runs Normally
     ...    for_loop_iterable=${{["S-5", "S-6-late"]}}    delay=0    return_values_only=True
     Should Be Equal    ${values}[1][state]    late
 
+Test Timeout Cancels Cooperative Calls
+    [Documentation]    Track Shipment declares `_cancelled`: the timeout sets it
+    ...    and the stuck calls stop polling instead of running forever.
+    [Timeout]    1 second
+    Run Parallel Scenarios    keyword=Track Shipment    library=${LIB}
+    ...    for_loop_iterable=${{["T-1-stuck", "T-2-stuck"]}}
+
+Cancelled Calls Stopped
+    ${cancelled}=    Get Cancelled Shipments    expected=2
+    Should Be Equal    ${cancelled}    ${{["T-1-stuck", "T-2-stuck"]}}
+
 
 *** Keywords ***
 Check Shipments With Keyword Timeout

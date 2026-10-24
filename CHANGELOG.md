@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`call_timeout` parameter on `Run Parallel Scenarios`**: the maximum time
+  each call may run, in Robot's time format (`call_timeout=10s`). A call
+  still running after it fails on its own - error `Timed out after 10
+  seconds`, with its partial logs - while the other calls keep running and
+  finish. It is reported like any other failed call (`ParallelTaskError`,
+  which unlike a Robot `[Timeout]` can be handled, or a `FAIL` entry with
+  `fail_on_error=False`). The timed-out call can't be killed and keeps
+  running in the background; a new worker thread takes its place so the
+  rest of the batch still runs `ROBOT_THREAD_WORKERS` calls at a time.
+- **Cooperative cancellation with `_cancelled`**: a keyword method that
+  declares a `_cancelled` parameter receives a `threading.Event`, set when
+  its call exceeds `call_timeout` or a Robot `[Timeout]` interrupts the
+  batch, so it can stop early instead of running on in the background.
+  Methods that don't declare it are called exactly as before.
+- `log_to_robot(msg, level="INFO")`, importable from `ParallelRunner`: the
+  fallback logger for a parallel-ready keyword called directly. It accepts
+  the same levels as the injected `_logger`; the fallback the documentation
+  used to recommend (`robot.api.logger.write`) failed with `Invalid log
+  level 'IGNORE'` (or `'WARNING'`) when the keyword was called directly.
+- Library documentation section "Call timeouts and cancellation";
+  `examples/log_levels/` demos for both; `atest/test_call_timeout.robot` and
+  `atest/test_keyword_calls.robot` (offline). 44 new unit tests.
+
+### Changed
+- **Arguments are converted by the keyword's type hints, like in a direct
+  call.** Named arguments given to `Run Parallel Scenarios` used to reach the
+  keyword as strings (`delay=0.5` arrived as `"0.5"`); they are now
+  converted with Robot's own argument conversion (type hints, then the types
+  of default values), exactly as when the test calls the keyword directly.
+  Items are converted the same way when they are strings; other items
+  (numbers, lists, dictionaries) are passed as they are, and the results
+  always report the original item. An item that can't be converted fails
+  only that call; a named argument that can't be converted fails the
+  keyword before any call runs. A keyword that relied on receiving strings
+  despite its type hints may need adjusting.
+- A keyword argument named `call_timeout` is no longer forwarded to the
+  target keyword.
+
+### Fixed
+- A keyword with a custom name (`@keyword("Check Order Status")`) was not
+  found by `Run Parallel Scenarios`, although Robot can call it directly.
+  Keywords are now found by method name or custom name, ignoring case,
+  spaces and underscores like Robot.
+- An invalid `ROBOT_THREAD_WORKERS` (e.g. `abc`) made the library import fail
+  with a bare `invalid literal for int()`; it is now ignored with a warning
+  (default 4 workers), as are values below 1.
+
 ## [0.3.1] - 2026-10-24
 
 ### Fixed
