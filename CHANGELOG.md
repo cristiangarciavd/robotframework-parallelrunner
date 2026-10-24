@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Development lockfile: `certifi` 2026.10.23 (was 2026.7.22), which no
+  longer trusts the emSign root CA after the eMudhra intermediate CA key
+  compromise ([Python advisory](https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576)).
+  `certifi` is only a development dependency (via `requests`, used by the
+  example libraries): the published package depends only on Robot Framework
+  and is not affected.
+
 ## [0.4.0] - 2026-10-24
 
 ### Added
