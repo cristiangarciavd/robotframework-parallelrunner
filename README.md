@@ -204,7 +204,7 @@ internal execution context and output.
 | Concurrency | Python's default thread pool size | `ROBOT_THREAD_WORKERS` |
 | Hung calls | `Async Get    timeout=...` stops waiting for them | `call_timeout` fails only that call and frees its slot for the next item |
 | Failures | `Async Get` raises the call's error | One failure listing every failed item, or a `PASS`/`FAIL` per item with `fail_on_error=False` |
-| Robot APIs used | Internal execution context and output | Public API only; tested on Robot Framework 5, 6 and 7 |
+| Robot internals | Works with the internal execution context and output | Not patched; logs only from the main thread, through the public logger API; tested on Robot Framework 5, 6 and 7 |
 
 Use AsyncLibrary when the work lives in user keywords (or in library
 keywords you can't change), or when you want to start something in the
