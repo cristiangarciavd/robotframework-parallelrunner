@@ -24,6 +24,7 @@ robot_results/
 
 # Local-only notes (personal working docs, not shipped with the project)
 notes/
+demo/
 
 # IDE
 .idea/
