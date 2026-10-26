@@ -61,7 +61,7 @@ could reasonably be added next.
 - `CODE_OF_CONDUCT.md` (Contributor Covenant)
 
 **Tests**
-- 52 Robot Framework test cases across 8 suites under `atest/`, all passing,
+- Robot Framework test cases across 12 suites under `atest/`, all passing,
   including a dedicated `test_repeat.robot` covering the `repeat` parameter
   (parallel data setup, repeated calls to a fixed endpoint, precedence vs.
   `for_loop_iterable`, the no-argument default, `return_values_only`, and the

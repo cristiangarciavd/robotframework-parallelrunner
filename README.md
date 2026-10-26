@@ -79,8 +79,8 @@ threading, buffering, and replay logic stay out of your `.robot` files.
 ## Summary of Benefits
 
 - **Speed.** Waiting time is overlapped instead of added up. In this repo's
-  examples, 9 HTTP checks with a 1 s delay each drop from 13 s to 2 s with
-  9 workers, and 4 suites × 8 items × 1 s drop from 32.7 s to 4.6 s with
+  examples, 9 HTTP checks with a 1 s delay each drop from 13.9 s to 2.2 s with
+  9 workers, and 4 suites × 8 items × 1 s drop from 32.9 s to 5.1 s with
   8 workers (see [Using It Together With pabot](#using-it-together-with-pabot)).
 - **Integrity.** Your `log.html` remains the single source of truth — no
   broken XML tags from concurrent writes.
@@ -149,7 +149,7 @@ pabot --processes 4 --pythonpath . atest/
 pabot --processes 4 --testlevelsplit --pythonpath . atest/
 ```
 
-Both commands pass the full acceptance suite of this repository (52 tests;
+Both commands pass the full acceptance suite of this repository (82 tests;
 checked with pabot 5.2.2).
 
 How much time each one saves, from the offline
@@ -158,14 +158,14 @@ How much time each one saves, from the offline
 
 | Run | Wall-clock time | Speedup |
 |---|---|---|
-| robot, sequential loop | 32.7 s | ×1.0 |
-| robot + ParallelRunner (8 workers) | 4.6 s | ×7.1 |
-| pabot (4 processes), sequential loop | 10.6 s | ×3.1 |
-| pabot (4 processes) + ParallelRunner (8 workers) | 3.5 s | ×9.2 |
+| robot, sequential loop | 32.9 s | ×1.0 |
+| robot + ParallelRunner (8 workers) | 5.1 s | ×6.5 |
+| pabot (4 processes), sequential loop | 12.4 s | ×2.7 |
+| pabot (4 processes) + ParallelRunner (8 workers) | 4.6 s | ×7.2 |
 
 ParallelRunner removes the waiting *inside* each test, and pabot removes it
 *between* suites. With suites this short, pabot's process start-up (about
-2.5 s here) is most of what's left, so the combination pays off more as
+3.5 s here) is most of what's left, so the combination pays off more as
 suites get longer.
 
 Things to keep in mind:
@@ -186,6 +186,31 @@ Things to keep in mind:
   suite drops and recreates its table in `Suite Setup`, so two of its tests
   could interfere with each other. Keep shared state per process, or split
   by suite.
+
+## How Is This Different From AsyncLibrary?
+
+[AsyncLibrary](https://github.com/rlehfeld/robotframework-async-keyword)
+(`pip install robotframework-async-keyword`) also runs keywords in threads
+inside one test case. It runs *any* keyword, user keywords included: you
+start each call with `Async Run` and collect it later with `Async Get`. It
+buffers each call's output and replays it, so `log.html` keeps the full
+nested keyword structure. To do that, it works with Robot Framework's
+internal execution context and output.
+
+| | **AsyncLibrary** | **ParallelRunner** |
+|---|---|---|
+| Runs | Any keyword, including user keywords | A method of a Python library that accepts `_logger` |
+| Usage | `Async Run` per call, `Async Get` later | One `Run Parallel Scenarios` call over a list, or `repeat=N` |
+| Concurrency | Python's default thread pool size | `ROBOT_THREAD_WORKERS` |
+| Hung calls | `Async Get    timeout=...` stops waiting for them | `call_timeout` fails only that call and frees its slot for the next item |
+| Failures | `Async Get` raises the call's error | One failure listing every failed item, or a `PASS`/`FAIL` per item with `fail_on_error=False` |
+| Robot APIs used | Internal execution context and output | Public API only; tested on Robot Framework 5, 6 and 7 |
+
+Use AsyncLibrary when the work lives in user keywords (or in library
+keywords you can't change), or when you want to start something in the
+background, run other steps, and collect it later. Use ParallelRunner to fan
+one Python keyword out over many items as a single batch, with a bounded
+worker pool, per-call timeouts and one failure report for the whole batch.
 
 ## When Not To Use This
 

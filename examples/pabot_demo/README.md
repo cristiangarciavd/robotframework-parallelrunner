@@ -39,15 +39,16 @@ On Windows PowerShell, set the variable first: `$env:ROBOT_THREAD_WORKERS = "8"`
 
 ## Results
 
-Measured on 2026-10-04 (Windows 11, Python 3.11, pabot 5.2.2, 3 runs, within
-±0.1 s of each other):
+Measured on 2026-10-25 (ParallelRunner 0.4.0, Windows 11, Python 3.11,
+pabot 5.2.2; median of 3 runs, which varied by up to ±0.3 s without pabot and
+±1.2 s with it):
 
 | Run | Wall-clock time | Speedup |
 |---|---|---|
-| robot, sequential loop | 32.7 s | ×1.0 |
-| robot + ParallelRunner (8 workers) | 4.6 s | ×7.1 |
-| pabot (4 processes), sequential loop | 10.6 s | ×3.1 |
-| pabot (4 processes) + ParallelRunner (8 workers) | 3.5 s | ×9.2 |
+| robot, sequential loop | 32.9 s | ×1.0 |
+| robot + ParallelRunner (8 workers) | 5.1 s | ×6.5 |
+| pabot (4 processes), sequential loop | 12.4 s | ×2.7 |
+| pabot (4 processes) + ParallelRunner (8 workers) | 4.6 s | ×7.2 |
 
 How to read it:
 
@@ -57,7 +58,7 @@ How to read it:
 - **pabot** removes the wait *between* suites: the 4 suites run at once, so
   the total is about one suite's time (8 s) plus process start-up.
 - **Both together**: about 1 s of real work, plus pabot's start-up cost
-  (roughly 2.5 s here). With such short suites that fixed cost dominates,
+  (roughly 3.5 s here). With such short suites that fixed cost dominates,
   which is why combining them gains less over ParallelRunner alone than you
   might expect. With longer suites the start-up cost matters less and the
   combination pays off more.

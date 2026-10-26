@@ -393,13 +393,14 @@ poetry run robot --pythonpath . atest/
 ### Network/IO Bound
 
 For network requests (API calls), parallelization provides significant speedup.
-Measured on this repository's examples (2026-10-04):
+Measured on this repository's examples (2026-10-25, version 0.4.0, median
+of 3 runs):
 
 - `atest/test_api.robot` (9 HTTP calls, each with a 1 s simulated delay):
-  13.0 s sequential, 4.7 s with 4 workers, 2.0 s with 9 workers.
-- `examples/pabot_demo` (4 suites × 8 items × 1 s, offline): 32.7 s
-  sequential, 4.6 s with ParallelRunner (8 workers), 10.6 s with pabot
-  (4 processes), 3.5 s with both. See the README section "Using It Together
+  13.9 s sequential, 5.1 s with 4 workers, 2.2 s with 9 workers.
+- `examples/pabot_demo` (4 suites × 8 items × 1 s, offline): 32.9 s
+  sequential, 5.1 s with ParallelRunner (8 workers), 12.4 s with pabot
+  (4 processes), 4.6 s with both. See the README section "Using It Together
   With pabot".
 
 ### CPU Bound
