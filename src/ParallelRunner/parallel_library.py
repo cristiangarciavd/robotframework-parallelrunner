@@ -54,6 +54,18 @@ def _not_given(value: Any) -> bool:
 _WORKER, _MAIN = "worker", "main"
 _NOT_SET = object()
 
+# Worker threads left running a call that was abandoned - timed out by
+# `call_timeout` or interrupted by a Robot `[Timeout]` - across every keyword
+# call of the run, so the limit (ROBOT_MAX_ABANDONED_THREADS) holds even when
+# the hung calls come from earlier tests. Only the thread running the keywords
+# changes it. Dead threads are dropped by `_abandoned_threads_alive`.
+_abandoned_threads: List[threading.Thread] = []
+
+
+def _abandoned_threads_alive() -> int:
+    _abandoned_threads[:] = [thread for thread in _abandoned_threads if thread.is_alive()]
+    return len(_abandoned_threads)
+
 
 def log_to_robot(msg: Any, level: str = "INFO") -> None:
     """Logs ``msg`` straight to Robot Framework, accepting the same levels as
@@ -255,6 +267,18 @@ class ParallelRunner:
     background, and a new worker thread takes its place so the remaining
     calls still run ``ROBOT_THREAD_WORKERS`` at a time.
 
+    So that calls that hang can't pile up hundreds of threads (and open
+    connections), the abandoned threads still running are limited by
+    ``ROBOT_MAX_ABANDONED_THREADS`` (default: twice ``ROBOT_THREAD_WORKERS``).
+    They are counted across the whole run - calls abandoned by earlier tests,
+    or interrupted by a Robot ``[Timeout]``, count too - and a thread stops
+    counting as soon as its call returns. Above the limit, a warning is logged
+    and timed-out workers are no longer replaced: the remaining calls run with
+    fewer workers, and if none is left they fail without starting, with error
+    ``Not started: abandoned thread limit (8) reached``. Every keyword call
+    still starts with its normal number of workers, whatever earlier tests
+    left running.
+
     A keyword that can stop early declares a ``_cancelled`` parameter.
     `Run Parallel Scenarios` then passes it a ``threading.Event`` that is set
     when that call times out, or when a Robot ``[Timeout]`` interrupts the
@@ -295,6 +319,7 @@ class ParallelRunner:
 
     | =Variable=             | =Description= |
     | ROBOT_THREAD_WORKERS   | Number of worker threads. Read when the library is imported. Default ``4``. An invalid value is ignored with a warning. |
+    | ROBOT_MAX_ABANDONED_THREADS | Maximum number of threads left running by timed-out calls before they are no longer replaced. Read when the library is imported. Default: twice ``ROBOT_THREAD_WORKERS``. ``0`` never replaces them. An invalid value is ignored with a warning. See `Call timeouts and cancellation`. |
     | ROBOT_LOGGER_MAPPER    | Default ``logger_mapper`` as a ``module.function`` path, used when the argument is not given. See `Custom logger mappers`. |
 
     = When not to use it =
@@ -312,6 +337,8 @@ class ParallelRunner:
 
     def __init__(self):
         self.max_workers = self._workers_from_environment()
+        # None: twice the number of workers (see `_abandoned_thread_limit`).
+        self.max_abandoned_threads = self._abandoned_limit_from_environment()
 
     def _workers_from_environment(self) -> int:
         """``ROBOT_THREAD_WORKERS``, or 4. An invalid value is ignored with a
@@ -331,6 +358,30 @@ class ParallelRunner:
             )
             return self.DEFAULT_WORKERS
         return workers
+
+    @staticmethod
+    def _abandoned_limit_from_environment() -> Optional[int]:
+        """``ROBOT_MAX_ABANDONED_THREADS``, or None for the default. An invalid
+        value is ignored with a warning, like ``ROBOT_THREAD_WORKERS``."""
+        value = os.getenv("ROBOT_MAX_ABANDONED_THREADS")
+        if _not_given(value):
+            return None
+        try:
+            limit = int(value)
+        except ValueError:
+            limit = -1
+        if limit < 0:
+            logger.warn(
+                f"Ignoring ROBOT_MAX_ABANDONED_THREADS {value!r}: expected a whole number of at least 0. "
+                "Using twice the number of workers."
+            )
+            return None
+        return limit
+
+    def _abandoned_thread_limit(self) -> int:
+        if self.max_abandoned_threads is None:
+            return 2 * self.max_workers
+        return self.max_abandoned_threads
 
     def run_parallel_scenarios(
         self,
@@ -624,7 +675,10 @@ class ParallelRunner:
         With ``call_timeout``, a call still running after that many seconds
         becomes a ``FAIL`` result: its thread is abandoned (it can't be
         killed) and a new worker takes its place, so the other calls keep
-        running ``max_workers`` at a time.
+        running ``max_workers`` at a time - while no more than the limit of
+        abandoned threads (``_abandoned_thread_limit``) are alive. Past it,
+        no replacements are started; if every worker is gone, the calls that
+        did not start fail right away.
 
         If the wait is interrupted (mostly by a Robot ``[Timeout]``), the
         workers stop starting new calls, the logs collected so far are
@@ -652,6 +706,7 @@ class ParallelRunner:
         # thread has timed the call out first. `claims` decides which of the
         # two wins: dict.setdefault is atomic, so the first claim sticks.
         started_at: List[Optional[float]] = [None] * count
+        threads: List[Optional[threading.Thread]] = [None] * count
         finished: List[Optional[Dict[str, Any]]] = [None] * count
         claims: Dict[int, str] = {}
         # Written by the main thread only.
@@ -685,6 +740,7 @@ class ParallelRunner:
                 except queue.Empty:
                     return
                 call_kwargs = kwargs if cancel_events is None else {**kwargs, "_cancelled": cancel_events[index]}
+                threads[index] = threading.current_thread()
                 started_at[index] = time.monotonic()
                 result = self._execute_and_capture(
                     method, items[index], logger_mapper, log_buffers[index], call_kwargs, arguments[index]
@@ -700,8 +756,12 @@ class ParallelRunner:
             workers_started += 1
             threading.Thread(target=worker, name=f"ParallelRunner-worker-{workers_started}", daemon=True).start()
 
+        workers_wanted = min(self.max_workers, count)
+        limit = self._abandoned_thread_limit()
+        abandoned_here = 0
+        limit_warned = False
         try:
-            for _ in range(min(self.max_workers, count)):
+            for _ in range(workers_wanted):
                 start_worker()
             # Deliberately no lock, Event or Future wait here: a timeout raised
             # asynchronously while such a wait holds an internal lock could
@@ -730,11 +790,33 @@ class ParallelRunner:
                         remaining -= 1
                         if cancel_events is not None:
                             cancel_events[index].set()
-                        if not pending.empty():
-                            start_worker()
+                        _abandoned_threads.append(threads[index])
+                        abandoned_here += 1
                     else:
                         still_running.append(index)
                 running = still_running
+                # Replace the workers abandoned by timed-out calls while calls
+                # are still waiting - unless too many abandoned threads are
+                # alive (from this keyword call or earlier ones). Checked on
+                # every round, so a slot freed by a hung call that finally
+                # returns is used again.
+                missing = workers_wanted - (workers_started - abandoned_here)
+                if missing > 0 and not pending.empty():
+                    alive = _abandoned_threads_alive()
+                    if alive <= limit:
+                        for _ in range(missing):
+                            start_worker()
+                    else:
+                        if not limit_warned:
+                            limit_warned = True
+                            logger.warn(
+                                f"{alive} thread(s) abandoned by timed-out calls are still running, more than the "
+                                f"limit of {limit} (ROBOT_MAX_ABANDONED_THREADS): timed-out workers are no longer "
+                                "replaced, so the remaining calls run with fewer workers."
+                            )
+                        if workers_started == abandoned_here:
+                            # No worker left to run them: fail them now instead of waiting forever.
+                            self._fail_not_started(pending, items, started_at, finished, log_buffers, limit)
                 if remaining:
                     time.sleep(_POLL_INTERVAL)
         except BaseException as error:
@@ -742,6 +824,10 @@ class ParallelRunner:
             if cancel_events is not None:
                 for event in cancel_events:
                     event.set()
+            # The calls still running are abandoned too: they count towards the limit.
+            for index in range(count):
+                if threads[index] is not None and results[index] is None and finished[index] is None:
+                    _abandoned_threads.append(threads[index])
             self._replay_interrupted(
                 items, results, finished, started_at, log_buffers, error, remove_passing_logs, min_level
             )
@@ -755,6 +841,28 @@ class ParallelRunner:
         logs.append(("ERROR", f"Call for item {item} timed out after {duration} (call_timeout); "
                               "it keeps running in the background"))
         return {"status": "FAIL", "item": item, "logs": logs, "error": f"Timed out after {duration}"}
+
+    @staticmethod
+    def _fail_not_started(pending, items, started_at, finished, log_buffers, limit: int) -> None:
+        """Fails every call still waiting in ``pending``. Only called when no
+        worker is left, so nothing else reads the queue. The results are
+        picked up by the main loop like those of finished calls."""
+        while True:
+            try:
+                index = pending.get_nowait()
+            except queue.Empty:
+                return
+            item = items[index]
+            log_buffers[index].append((
+                "ERROR",
+                f"Call for item {item} not started: every worker was abandoned by a timed-out call and "
+                f"the abandoned thread limit ({limit}, ROBOT_MAX_ABANDONED_THREADS) was reached",
+            ))
+            finished[index] = {
+                "status": "FAIL", "item": item, "logs": log_buffers[index],
+                "error": f"Not started: abandoned thread limit ({limit}) reached",
+            }
+            started_at[index] = time.monotonic()
 
     def _replay_interrupted(self, items, results, finished, started_at, log_buffers, error, remove_passing_logs, min_level):
         """Replays what the calls logged before the keyword was interrupted.

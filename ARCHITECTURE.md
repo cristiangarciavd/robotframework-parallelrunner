@@ -196,6 +196,19 @@ main thread when the limit is exceeded. The first claim wins. A worker that
 loses stops (it doesn't take new calls - its replacement does), so no more
 than `ROBOT_THREAD_WORKERS` calls are ever running except the abandoned ones.
 
+The abandoned threads are limited by `ROBOT_MAX_ABANDONED_THREADS` (default
+twice the workers). The main thread keeps them in a module-level list
+(`_abandoned_threads`), shared by every keyword call of the run, because hung
+calls pile up across tests, not within one call. Threads interrupted by a
+Robot `[Timeout]` are added too. Dead threads are dropped whenever the list is
+counted, so a hung call that finally returns frees its slot. A replacement is
+only started while the live count is within the limit; this is checked on
+every round of the wait loop, not only when a call times out. Past the limit
+the batch goes on with fewer workers, and once no worker is left, the calls
+still in the queue fail as not started (`_fail_not_started`) instead of
+waiting forever. The initial workers of a keyword call are always started:
+otherwise one test's hung calls would make later tests fail without running.
+
 A method that declares `_cancelled` gets a `threading.Event` per call. The
 main thread sets it when the call times out, and sets all of them when the
 batch is interrupted (Robot `[Timeout]`), so cooperative keywords stop

@@ -133,6 +133,13 @@ def runner(monkeypatch, fake_library):
     return lib
 
 
+@pytest.fixture(autouse=True)
+def no_abandoned_threads(monkeypatch):
+    """The abandoned thread count is global: start every test from zero, so
+    threads left by earlier tests don't count towards the limit."""
+    monkeypatch.setattr(parallel_library, "_abandoned_threads", [])
+
+
 @pytest.fixture
 def robot_logger(monkeypatch):
     recorder = RecordingLogger()
@@ -684,6 +691,9 @@ def test_calls_finishing_around_the_timeout_are_counted_once(runner, robot_logge
     random.seed(7)
     durations = [round(random.uniform(0.03, 0.07), 3) for _ in range(60)]
     runner.max_workers = 6
+    # Not what this test is about: on a slow machine the abandoned threads
+    # could reach the default limit and leave calls not started.
+    runner.max_abandoned_threads = len(durations)
     results = runner.run_parallel_scenarios(
         "Wait Seconds", "Fake", for_loop_iterable=durations, call_timeout=0.05, fail_on_error=False
     )
@@ -694,6 +704,112 @@ def test_calls_finishing_around_the_timeout_are_counted_once(runner, robot_logge
     fake_library.release.set()
     assert wait_until(lambda: not worker_threads_alive())
     assert sorted(fake_library.started) == sorted(durations)
+
+
+# --- Abandoned thread limit (0.5.0) ---
+
+
+NOT_STARTED_0 = "Not started: abandoned thread limit (0) reached"
+
+
+def limit_warnings(robot_logger):
+    return [msg for level, msg in robot_logger.messages if level == "WARN" and "ROBOT_MAX_ABANDONED_THREADS" in msg]
+
+
+def test_abandoned_thread_limit_defaults_to_twice_the_workers(runner):
+    runner.max_workers = 3
+    assert runner._abandoned_thread_limit() == 6
+    runner.max_abandoned_threads = 1
+    assert runner._abandoned_thread_limit() == 1
+
+
+def test_over_the_limit_the_remaining_calls_run_with_fewer_workers(runner, robot_logger, fake_library, monkeypatch):
+    seen = started_threads(monkeypatch)
+    runner.max_workers = 2
+    runner.max_abandoned_threads = 0
+    results = runner.run_parallel_scenarios(
+        # The second worker is still busy with the 0.3 s calls when the first one times out.
+        "Wait Seconds", "Fake", for_loop_iterable=[30, 0.3, 0.3, 0.3], call_timeout=0.5, fail_on_error=False
+    )
+    assert [r["status"] for r in results] == ["FAIL", "PASS", "PASS", "PASS"]
+    assert len(seen) == 2, "the timed-out worker was replaced although the limit was reached"
+    (warning,) = limit_warnings(robot_logger)
+    assert warning.startswith("1 thread(s) abandoned by timed-out calls are still running, more than the limit of 0")
+
+
+def test_with_no_worker_left_the_calls_not_started_fail_right_away(runner, robot_logger, fake_library):
+    runner.max_workers = 2
+    runner.max_abandoned_threads = 0
+    start = time.monotonic()
+    results = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[30, 30, 0.01, 0.01], call_timeout=0.2, fail_on_error=False
+    )
+    assert time.monotonic() - start < 2
+    assert [r["error"] for r in results] == [
+        "Timed out after 200 milliseconds", "Timed out after 200 milliseconds", NOT_STARTED_0, NOT_STARTED_0,
+    ]
+    assert fake_library.started == [30, 30]
+    assert results[2]["logs"] == [(
+        "ERROR",
+        "Call for item 0.01 not started: every worker was abandoned by a timed-out call and "
+        "the abandoned thread limit (0, ROBOT_MAX_ABANDONED_THREADS) was reached",
+    )]
+    assert len(limit_warnings(robot_logger)) == 1
+
+
+def test_not_started_calls_are_reported_by_parallel_task_error(runner, robot_logger, fake_library):
+    runner.max_workers = 1
+    runner.max_abandoned_threads = 0
+    with pytest.raises(ParallelTaskError, match=r"2 of 2 parallel task\(s\) failed: .*item=0.01: Not started"):
+        runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[30, 0.01], call_timeout=0.2)
+
+
+def test_the_default_limit_replaces_up_to_twice_the_workers(runner, robot_logger, fake_library):
+    runner.max_workers = 1
+    results = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[30, 30, 30, 0.01], call_timeout=0.2, fail_on_error=False
+    )
+    assert [r["error"] for r in results] == ["Timed out after 200 milliseconds"] * 3 + [
+        "Not started: abandoned thread limit (2) reached"
+    ]
+
+
+def test_threads_abandoned_by_earlier_keyword_calls_count(runner, robot_logger, fake_library):
+    """The limit is global: hung calls of an earlier test count. The new
+    keyword call still starts its own workers."""
+    runner.max_workers = 1
+    runner.max_abandoned_threads = 1
+    runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[30], call_timeout=0.2, fail_on_error=False)
+    results = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[30, 0.01], call_timeout=0.2, fail_on_error=False
+    )
+    assert fake_library.started == [30, 30]
+    assert results[1]["error"] == "Not started: abandoned thread limit (1) reached"
+
+
+def test_an_abandoned_thread_that_returns_stops_counting(runner, robot_logger, fake_library):
+    runner.max_workers = 1
+    runner.max_abandoned_threads = 1
+    runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[30], call_timeout=0.2, fail_on_error=False)
+    fake_library.release.set()
+    assert wait_until(lambda: not worker_threads_alive())
+    fake_library.release.clear()
+    results = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[30, 0.01], call_timeout=0.2, fail_on_error=False
+    )
+    assert [r["status"] for r in results] == ["FAIL", "PASS"]
+    assert limit_warnings(robot_logger) == []
+
+
+def test_calls_interrupted_by_a_robot_timeout_count_as_abandoned(runner, robot_logger, fake_library):
+    run_interrupted(runner, for_loop_iterable=[0.01, 30])
+    assert parallel_library._abandoned_threads_alive() == 1
+    runner.max_workers = 1
+    runner.max_abandoned_threads = 1
+    results = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[30, 0.01], call_timeout=0.2, fail_on_error=False
+    )
+    assert results[1]["error"] == "Not started: abandoned thread limit (1) reached"
 
 
 @pytest.mark.parametrize(
@@ -822,6 +938,29 @@ def test_empty_workers_variable_uses_the_default_silently(robot_logger, monkeypa
     monkeypatch.setenv("ROBOT_THREAD_WORKERS", value)
     assert ParallelRunner().max_workers == 4
     assert warnings_logged(robot_logger) == []
+
+
+# --- ROBOT_MAX_ABANDONED_THREADS (0.5.0) ---
+
+
+@pytest.mark.parametrize("value, limit", [("0", 0), ("3", 3), (" 12 ", 12), ("", None), ("None", None)])
+def test_abandoned_limit_is_read_from_the_environment(robot_logger, monkeypatch, value, limit):
+    monkeypatch.setenv("ROBOT_MAX_ABANDONED_THREADS", value)
+    assert ParallelRunner().max_abandoned_threads == limit
+    assert warnings_logged(robot_logger) == []
+
+
+def test_abandoned_limit_not_set_means_the_default(robot_logger, monkeypatch):
+    monkeypatch.delenv("ROBOT_MAX_ABANDONED_THREADS", raising=False)
+    assert ParallelRunner().max_abandoned_threads is None
+
+
+@pytest.mark.parametrize("value", ["abc", "-1", "1.5"])
+def test_invalid_abandoned_limit_warns_and_uses_the_default(robot_logger, monkeypatch, value):
+    monkeypatch.setenv("ROBOT_MAX_ABANDONED_THREADS", value)
+    assert ParallelRunner().max_abandoned_threads is None
+    (warning,) = warnings_logged(robot_logger)
+    assert f"Ignoring ROBOT_MAX_ABANDONED_THREADS {value!r}" in warning
 
 
 # --- log_to_robot (0.4.0) ---

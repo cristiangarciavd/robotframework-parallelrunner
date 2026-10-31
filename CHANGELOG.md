@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Limit on abandoned threads, `ROBOT_MAX_ABANDONED_THREADS`** (default:
+  twice `ROBOT_THREAD_WORKERS`). Every call that exceeded `call_timeout`
+  left its thread running and got a replacement, without limit, so hundreds
+  of hung calls meant hundreds of threads and open connections. Now, while
+  more abandoned threads than the limit are alive - counted across the
+  whole run, including calls interrupted by a Robot `[Timeout]` - a warning
+  is logged and timed-out workers are no longer replaced: the remaining
+  calls run with fewer workers, and if no worker is left they fail without
+  starting (`Not started: abandoned thread limit (8) reached`). A thread
+  stops counting once its call returns. Each keyword call still starts its
+  normal number of workers.
+
 ### Security
 - Development lockfile: `certifi` 2026.10.23 (was 2026.7.22), which no
   longer trusts the emSign root CA after the eMudhra intermediate CA key
