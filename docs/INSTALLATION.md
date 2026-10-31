@@ -2,8 +2,30 @@
 
 ## Requirements
 
-- Python >= 3.9
+- Python >= 3.10
 - [Robot Framework](https://robotframework.org/) >= 5.0 (installed automatically as a dependency)
+
+### Python 3.8 and 3.9 (unsupported)
+
+Python 3.8 and 3.9 no longer get security fixes (end of life in October
+2024 and October 2025), and since 0.5.0 the library no longer supports them:
+they are not tested in CI, and later releases may stop working on them
+without notice.
+
+On Python 3.9 a normal `pip install robotframework-parallelrunner`
+installs **0.4.0**, the last release that supports it. On Python 3.8 it
+finds no release at all: none of the published ones supported 3.8.
+
+0.5.0 itself was tested on 2026-10-31 and every unit and acceptance test
+passed on Python 3.8.20 and 3.9.25, with Robot Framework 5.0.1 and 7.5. If
+you need it there, install it at your own risk:
+
+```bash
+pip install --ignore-requires-python "robotframework-parallelrunner==0.5.0"
+```
+
+Pin the version: without it, a later release that no longer works on your
+Python could be installed.
 
 ## Install from PyPI
 

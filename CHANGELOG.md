@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stops counting once its call returns. Each keyword call still starts its
   normal number of workers.
 
+### Removed
+- **Python 3.9 support.** Python 3.9 reached end of life in October 2025,
+  and its newest pip can't get the fix for the emSign/eMudhra CA incident
+  (pip >= 26.2.2 needs Python 3.10). `requires-python` is now `>=3.10`, and
+  CI runs on Python 3.10, 3.11 and 3.13. On Python 3.9, pip keeps
+  installing 0.4.0. This release was tested and works on Python 3.8 and
+  3.9 (Robot Framework 5.0.1 and 7.5): see "Python 3.8 and 3.9" in
+  `docs/INSTALLATION.md` to install it there anyway, without support.
+
 ### Changed
 - Named arguments called `call_retries`, `retry_delay` or `retry_backoff`
   are now arguments of `Run Parallel Scenarios`, so they are no longer

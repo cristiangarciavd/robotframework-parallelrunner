@@ -83,7 +83,7 @@ could reasonably be added next.
 
 **CI**
 - `.github/workflows/tests.yml`: installs with Poetry and runs the unit and
-  acceptance tests, plus a libdoc build check, on Python 3.9, 3.11 and 3.13
+  acceptance tests, plus a libdoc build check, on Python 3.10, 3.11 and 3.13
 - `.github/workflows/publish.yml`: on a published GitHub Release, runs the
   tests and publishes to TestPyPI and PyPI via Trusted Publishing
 

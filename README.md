@@ -19,9 +19,10 @@ correctly ordered `log.html` plus a structured list of per-item results.
 pip install robotframework-parallelrunner
 ```
 
-Requires Python 3.9+ and Robot Framework 5.0+ (installed automatically).
-See [docs/INSTALLATION.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/docs/INSTALLATION.md) for development installs
-and upgrading from the pre-release import path.
+Requires Python 3.10+ and Robot Framework 5.0+ (installed automatically).
+See [docs/INSTALLATION.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/docs/INSTALLATION.md) for development installs,
+upgrading from the pre-release import path, and Python 3.8/3.9 (no longer
+supported, but 0.5.0 was tested and works on them).
 
 ## Quickstart
 
