@@ -61,6 +61,9 @@ then fails with `ParallelTaskError` (unless `fail_on_error=False`).
 | `return_values_only` | `bool` | No | `False` | When `True`, return a plain `tuple` of each call's return value - in call order - instead of the list of result dictionaries. Raises `ParallelTaskError` if any task failed (there is no meaningful value to put in its slot). This is the natural pairing with `repeat`: since there's no input list to zip results against, unpacking directly into N variables is often more convenient than indexing into a list of dicts - e.g. `${id1}    ${id2}    ${id3}=    Run Parallel Scenarios    ...    repeat=3    return_values_only=True`. Equivalent to calling `Get Result Values` on the default (dict-list) return value. |
 | `fail_on_error` | `bool` | No | `True` | When `True`, raise `ParallelTaskError` if any task failed, so the keyword (and the test) fails. It is raised only after every task has finished and all logs have been replayed, and its message lists each failed item and its error. When `False`, return the result list anyway: failed tasks have `status == "FAIL"` (and their error is logged at `ERROR` level), and checking them is up to the caller, e.g. `Should Be Equal    ${results}[1][status]    PASS`. Has no effect with `return_values_only=True`, which always raises on a failed task. Before 0.3.0 the keyword behaved as if this were `False`. |
 | `call_timeout` | `str`, `float` or `None` | No | `None` | Maximum time each call may run, in Robot's time format (`"10s"`, `"1 minute 30 seconds"`, `2.5`). A call still running after it becomes a `FAIL` result with error `Timed out after <time>` and its partial logs, while the other calls keep running; a new worker thread replaces the abandoned one (up to `ROBOT_MAX_ABANDONED_THREADS` abandoned threads alive). The timed-out call can't be killed: it keeps running in the background, unless it declares `_cancelled` (see the method contract). `None`, `""` or `"NONE"`: no limit. Zero, negative or unparsable values fail the keyword before anything runs. Not forwarded to the keyword (added in 0.4.0: a keyword argument named `call_timeout` is no longer forwarded). |
+| `call_retries` | `int`, `str` or `None` | No | `0` | How many more times a failed call is run before it counts as failed. A call that exceeds `call_timeout` is retried too (`call_timeout` applies to each attempt), but only while the abandoned threads are within `ROBOT_MAX_ABANDONED_THREADS`; otherwise it fails with its timeout error and an `ERROR` saying it was not retried. Every attempt's logs are kept, separated by a `WARN` (`Attempt 1 of 3 failed: <error>; retrying in 1 second`); only the last failure is logged as `ERROR`. A retry waits in a worker thread, queued after the calls already waiting. A Robot `[Timeout]` stops the retries. Not a whole number of at least 0: fails the keyword before anything runs. Not forwarded to the keyword. Added in 0.5.0. |
+| `retry_delay` | `str`, `float` or `None` | No | `"1s"` | Wait before the first retry, in Robot's time format; `0` retries right away. Negative or unparsable values fail the keyword before anything runs. Not forwarded to the keyword. Added in 0.5.0. |
+| `retry_backoff` | `float`, `str` or `None` | No | `1` | Multiplies the wait after every failed retry: the wait before attempt `n + 1` is `retry_delay * retry_backoff ** (n - 1)`, so `retry_delay=1s retry_backoff=2` waits 1 s, 2 s, 4 s... `1` keeps the wait fixed. Below 1 (or not a finite number) fails the keyword before anything runs. Not forwarded to the keyword. Added in 0.5.0. |
 | `**kwargs` | `Any` | No | - | Any additional keyword arguments are forwarded verbatim to every call of `keyword`. |
 
 ### Return value
@@ -75,8 +78,12 @@ holds regardless of which thread happens to finish first.
 > `concurrent.futures.as_completed` (completion) order instead of call order.
 > That was a real ordering gap for direct indexing - see `CHANGELOG.md`.
 
-- On success: `{"status": "PASS", "item": <item>, "logs": [(level, msg), ...], "result": <return value of keyword>}`
-- On failure (the method raised): `{"status": "FAIL", "item": <item>, "logs": [(level, msg), ...], "error": "<exception message>"}`
+- On success: `{"status": "PASS", "item": <item>, "logs": [(level, msg), ...], "result": <return value of keyword>, "attempts": <n>}`
+- On failure (the method raised): `{"status": "FAIL", "item": <item>, "logs": [(level, msg), ...], "error": "<exception message>", "attempts": <n>}`
+
+`attempts` (added in 0.5.0) is how many times the call ran: `1`, or more with
+`call_retries`. It is `0` for a call that never ran (its item could not be
+converted, or it was not started because of `ROBOT_MAX_ABANDONED_THREADS`).
 
 With the default `fail_on_error=True` the list is only returned when every
 task passed; any failure raises `ParallelTaskError` instead. `FAIL` entries
@@ -198,10 +205,12 @@ API, but documented here for maintainers:
 - `_converter_for(method)` - Robot's own argument conversion (`PythonArgumentParser(...).convert`) for the method, or `None` if its signature can't be parsed.
 - `_accepts_cancel_event(method)` - whether the method declares `_cancelled`.
 - `_resolve_thread_log_level(thread_log_level)` - turns `thread_log_level` into a numeric minimum; warns on an unknown value.
-- `_run_in_threads(method, items, logger_mapper, remove_passing_logs, min_level, kwargs, call_timeout)` - converts the arguments, starts the daemon worker threads, waits for the results (in short sleeps, so a Robot `[Timeout]` can interrupt it), times out calls that exceed `call_timeout` (starting a replacement worker), and on interruption stops new calls, sets the `_cancelled` events and replays the partial logs.
-- `_timed_out_result(item, log_buffer, call_timeout)` - the `FAIL` result of a timed-out call.
+- `_run_in_threads(method, items, logger_mapper, remove_passing_logs, min_level, kwargs, call_timeout, retry)` - converts the arguments, starts the daemon worker threads, waits for the results (in short sleeps, so a Robot `[Timeout]` can interrupt it), times out attempts that exceed `call_timeout` (starting a replacement worker, within the abandoned thread limit), queues retries as `retry` (a `RetryPolicy`) allows, and on interruption stops new calls, sets the `_cancelled` events and replays the partial logs.
+- `_timed_out_result(item, log_buffer, call_timeout, attempt, not_retried_limit)` - the `FAIL` result of a timed-out call.
+- `_fail_not_started(...)` - fails the calls still queued when no worker is left (abandoned thread limit reached).
+- `ParallelRunner.retry.RetryPolicy` - `call_retries`, `retry_delay` and `retry_backoff`: `from_arguments(...)` validates them, `can_retry(attempt)` and `delay_after(attempt)` decide whether and when to retry, and it builds the messages logged between attempts.
 - `_replay_interrupted(...)` - builds the partial results after an interruption and replays them, with a summary line.
-- `_execute_and_capture(method, item, logger_mapper, log_buffer, kwargs, argument)` - worker-thread entry point (`argument` is the converted item the call receives, `item` what the result reports); buffers logs into `log_buffer` (created by the main thread) and captures pass/fail results. Catches `BaseException`, so a call always produces a result.
+- `_execute_and_capture(method, item, logger_mapper, log_buffer, kwargs, argument, log_failure)` - worker-thread entry point (`log_failure=False` for an attempt that will be retried: no `ERROR` line) (`argument` is the converted item the call receives, `item` what the result reports); buffers logs into `log_buffer` (created by the main thread) and captures pass/fail results. Catches `BaseException`, so a call always produces a result.
 - `_replay_logs(results, remove_passing_logs, min_level)` - replays buffered logs sequentially with `robot.api.logger.write`, applying filtering.
 
 ## Examples

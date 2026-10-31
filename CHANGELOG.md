@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Retries: `call_retries`, `retry_delay` and `retry_backoff` on `Run
+  Parallel Scenarios`.** `call_retries=2` runs a failed call up to twice
+  more before it counts as failed; only that call is retried. Between
+  attempts it waits `retry_delay` (default `1s`), multiplied by
+  `retry_backoff` after every failed retry (`retry_backoff=2`: 1 s, 2 s,
+  4 s...). A call that exceeds `call_timeout` is retried too (the timeout
+  applies to each attempt) while the abandoned threads are within
+  `ROBOT_MAX_ABANDONED_THREADS`. Every attempt's logs are kept, separated by
+  a `WARN` such as `Attempt 1 of 3 failed: <error>; retrying in 1 second`;
+  only the last failure is logged as `ERROR`. Invalid values fail the
+  keyword before anything runs. The retry logic lives in a new module,
+  `ParallelRunner.retry`.
+- **`attempts` in every result dictionary**: how many times the call ran
+  (`1` without retries, `0` for a call that never ran), to spot calls that
+  are flaky even when the test passes.
 - **Limit on abandoned threads, `ROBOT_MAX_ABANDONED_THREADS`** (default:
   twice `ROBOT_THREAD_WORKERS`). Every call that exceeded `call_timeout`
   left its thread running and got a replacement, without limit, so hundreds
@@ -19,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starting (`Not started: abandoned thread limit (8) reached`). A thread
   stops counting once its call returns. Each keyword call still starts its
   normal number of workers.
+
+### Changed
+- Named arguments called `call_retries`, `retry_delay` or `retry_backoff`
+  are now arguments of `Run Parallel Scenarios`, so they are no longer
+  forwarded to the target keyword (as happened with `call_timeout` in
+  0.4.0). Rename such keyword arguments to keep passing them.
 
 ### Security
 - Development lockfile: `certifi` 2026.10.23 (was 2026.7.22), which no

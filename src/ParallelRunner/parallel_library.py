@@ -15,6 +15,7 @@ from robot.libraries.BuiltIn import BuiltIn
 from robot.running.arguments import PythonArgumentParser
 from robot.utils import secs_to_timestr, timestr_to_secs
 
+from .retry import NO_RETRIES, RetryPolicy
 from .version import __version__
 
 
@@ -191,6 +192,7 @@ class ParallelRunner:
     | logs     | List of ``(level, message)`` tuples captured during the call. |
     | result   | The return value of the call (only when ``status`` is ``PASS``). |
     | error    | The error message (only when ``status`` is ``FAIL``), e.g. ``Timed out after 10 seconds`` with ``call_timeout``. |
+    | attempts | How many times the call ran: ``1``, or more with ``call_retries`` (see `Retries`). ``0`` for a call that never ran. |
 
     = Failures =
 
@@ -295,6 +297,32 @@ class ParallelRunner:
     existing keywords keep working unchanged. It can't interrupt a call that
     is blocked in a single operation (a network request without a timeout).
 
+    = Retries =
+
+    ``call_retries=N`` runs a failed call up to ``N`` more times before it
+    counts as failed. Only that call is retried; the others are not affected.
+
+    | ${results}= | Run Parallel Scenarios | keyword=Verify Agent | library=MyLibrary | for_loop_iterable=${agents} | call_retries=2 | retry_delay=1s | retry_backoff=2 |
+
+    - Between attempts the call waits ``retry_delay`` (default ``1s``), multiplied by
+      ``retry_backoff`` after every failed retry: above, 1 second before the second
+      attempt and 2 seconds before the third. The wait happens in a worker
+      thread, after the calls that were already waiting.
+    - A call that exceeds ``call_timeout`` is retried too, and ``call_timeout``
+      applies to each attempt. The timed-out attempt keeps running in the
+      background, so it is only retried while the abandoned threads are within
+      ``ROBOT_MAX_ABANDONED_THREADS``; otherwise it fails with its timeout error.
+    - Every attempt's logs are kept, separated by a ``WARN`` such as
+      ``Attempt 1 of 3 failed: <error>; retrying in 1 second``, so ``log.html``
+      shows why a call needed retries even when it passed in the end. Only the
+      last failure is logged as ``ERROR``.
+    - The ``attempts`` key of the result tells how many attempts the call took,
+      to spot calls that are flaky even when the test passes.
+    - A Robot ``[Timeout]`` stops the retries along with the rest of the batch.
+
+    Retry only what is safe to repeat: a call that failed half way may already
+    have changed something (a created record, a sent message).
+
     = Custom logger mappers =
 
     A logger mapper replaces the default buffering logger: the target keyword
@@ -395,6 +423,9 @@ class ParallelRunner:
         return_values_only: bool = False,
         fail_on_error: bool = True,
         call_timeout: Union[str, float, None] = None,
+        call_retries: Union[int, str, None] = 0,
+        retry_delay: Union[str, float, None] = "1s",
+        retry_backoff: Union[float, str, None] = 1,
         **kwargs
     ) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]:
         """Runs ``keyword`` from ``library`` concurrently, once per item or N times.
@@ -439,6 +470,13 @@ class ParallelRunner:
           calls keep running; calls that declare ``_cancelled`` are told to
           stop. Not given (default): no limit. See
           `Call timeouts and cancellation`.
+        - ``call_retries``: How many more times a failed call is tried
+          (``0``, default: none). A call that exceeds ``call_timeout`` is
+          retried too. See `Retries`.
+        - ``retry_delay``: Wait before the first retry, in Robot's time format.
+          Default ``1s``; ``0`` retries right away.
+        - ``retry_backoff``: Multiplies the wait after every failed retry:
+          ``2`` waits 1 s, 2 s, 4 s... Default ``1`` (always the same wait).
         - ``**kwargs``: Any other named argument is passed to every call,
           converted by the method's type hints like in a direct call.
 
@@ -454,6 +492,7 @@ class ParallelRunner:
         | ${id1}    ${id2}    ${id3}= | Run Parallel Scenarios | keyword=Seed Record | library=MyLibrary | repeat=3 | return_values_only=True |
         | ${results}=   | Run Parallel Scenarios | keyword=Verify Agent Data | library=MyLibrary       | for_loop_iterable=${agents} | fail_on_error=False |
         | ${results}=   | Run Parallel Scenarios | keyword=Verify Agent Data | library=MyLibrary       | for_loop_iterable=${agents} | call_timeout=30s |
+        | ${results}=   | Run Parallel Scenarios | keyword=Verify Agent Data | library=MyLibrary       | for_loop_iterable=${agents} | call_retries=2 | retry_delay=500ms |
         """
         # Determine items to process. NOTE: `repeat or 1` would be wrong here -
         # 0 is falsy in Python, so an explicit repeat=0 would silently fall
@@ -473,6 +512,7 @@ class ParallelRunner:
 
         min_level = self._resolve_thread_log_level(thread_log_level)
         timeout_seconds = self._resolve_call_timeout(call_timeout)
+        retry = RetryPolicy.from_arguments(call_retries, retry_delay, retry_backoff)
 
         # Note: We must call the underlying Python method, not BuiltIn().run_keyword
         # because run_keyword is not thread-safe.
@@ -480,7 +520,7 @@ class ParallelRunner:
         method = self._get_keyword_method(lib_instance, keyword)
 
         results = self._run_in_threads(
-            method, list(items), effective_mapper, remove_passing_logs, min_level, kwargs, timeout_seconds
+            method, list(items), effective_mapper, remove_passing_logs, min_level, kwargs, timeout_seconds, retry
         )
 
         # Step: Re-play logs into Robot Framework sequentially
@@ -667,10 +707,17 @@ class ParallelRunner:
         min_level: int,
         kwargs: Dict[str, Any],
         call_timeout: Optional[float] = None,
+        retry: RetryPolicy = NO_RETRIES,
     ) -> List[Dict[str, Any]]:
         """
         Runs ``method`` once per item on up to ``max_workers`` daemon threads
         and returns the result dicts in call order (NOT completion order).
+
+        A failed attempt is tried again while ``retry`` allows it: the worker
+        puts the call back in the queue with the time it may start again, and
+        whichever worker takes it waits until then. ``call_timeout`` applies
+        to each attempt, and a timed-out attempt is retried only while the
+        abandoned threads are within their limit.
 
         With ``call_timeout``, a call still running after that many seconds
         becomes a ``FAIL`` result: its thread is abandoned (it can't be
@@ -701,14 +748,27 @@ class ParallelRunner:
         # Created here, not in the workers, so the logs of calls that are still
         # running can be replayed if the keyword is interrupted or times out.
         log_buffers: List[list] = [[] for _ in items]
-        # Written by the workers. A worker writes `started_at[i]` when call i
-        # starts and `finished[i]` when it has returned - unless the main
-        # thread has timed the call out first. `claims` decides which of the
-        # two wins: dict.setdefault is atomic, so the first claim sticks.
+        # Written by the workers. When an attempt of call i starts, a worker
+        # writes `threads[i]`, `attempts[i]` (its number, 1-based) and then
+        # `attempt_started[i]` - in that order. `attempt_started[i]` is None
+        # while the call waits for a retry (it is cleared before the retry is
+        # queued), and the main thread reads `attempts[i]` first: so it never
+        # pairs an attempt with the start time of an earlier one, which would
+        # time the new attempt out too soon. `started_at[i]` is the start of
+        # the first attempt. `finished[i]`
+        # is written when the last attempt has returned - unless the main
+        # thread has timed the attempt out first. `claims`, keyed by (call,
+        # attempt), decides which of the two wins: dict.setdefault is atomic,
+        # so the first claim sticks.
         started_at: List[Optional[float]] = [None] * count
+        attempt_started: List[Optional[float]] = [None] * count
+        attempts: List[int] = [0] * count
         threads: List[Optional[threading.Thread]] = [None] * count
         finished: List[Optional[Dict[str, Any]]] = [None] * count
-        claims: Dict[int, str] = {}
+        claims: Dict[Tuple[int, int], str] = {}
+        # One entry per worker that ended because there was nothing left to
+        # run (or the batch was interrupted), not because it was abandoned.
+        exited: List[int] = []
         # Written by the main thread only.
         results: List[Optional[Dict[str, Any]]] = [None] * count
 
@@ -727,29 +787,55 @@ class ParallelRunner:
                     message = str(error)
                     log_buffers[index].append(("ERROR", f"Thread failed for item {item}: {message}"))
                     started_at[index] = time.monotonic()
-                    finished[index] = {"status": "FAIL", "item": item, "logs": log_buffers[index], "error": message}
+                    finished[index] = {
+                        "status": "FAIL", "item": item, "logs": log_buffers[index], "error": message, "attempts": 0,
+                    }
                     continue
-            pending.put(index)
+            # (call, attempt, earliest start): retries go back in the queue too.
+            pending.put((index, 1, 0.0))
         stop = threading.Event()
         workers_started = 0
 
         def worker():
-            while not stop.is_set():
-                try:
-                    index = pending.get_nowait()
-                except queue.Empty:
-                    return
-                call_kwargs = kwargs if cancel_events is None else {**kwargs, "_cancelled": cancel_events[index]}
-                threads[index] = threading.current_thread()
-                started_at[index] = time.monotonic()
-                result = self._execute_and_capture(
-                    method, items[index], logger_mapper, log_buffers[index], call_kwargs, arguments[index]
-                )
-                if claims.setdefault(index, _WORKER) != _WORKER:
-                    # The call timed out and a new worker took this thread's
-                    # place: stop here, so no more than max_workers calls run.
-                    return
-                finished[index] = result
+            abandoned = False
+            try:
+                while not stop.is_set():
+                    try:
+                        index, attempt, ready_at = pending.get_nowait()
+                    except queue.Empty:
+                        return
+                    wait = ready_at - time.monotonic()
+                    if wait > 0 and stop.wait(wait):
+                        return
+                    call_kwargs = kwargs if cancel_events is None else {**kwargs, "_cancelled": cancel_events[index]}
+                    log_buffer = log_buffers[index]
+                    threads[index] = threading.current_thread()
+                    attempts[index] = attempt
+                    now = time.monotonic()
+                    attempt_started[index] = now
+                    if started_at[index] is None:
+                        started_at[index] = now
+                    last = not retry.can_retry(attempt)
+                    result = self._execute_and_capture(
+                        method, items[index], logger_mapper, log_buffer, call_kwargs, arguments[index],
+                        log_failure=last,
+                    )
+                    if claims.setdefault((index, attempt), _WORKER) != _WORKER:
+                        # The attempt timed out and a new worker took this
+                        # thread's place: stop here, so no more than
+                        # max_workers calls run.
+                        abandoned = True
+                        return
+                    if result["status"] == "FAIL" and not last:
+                        attempt_started[index] = None
+                        log_buffer.append(("WARN", retry.failed_message(attempt, result["error"])))
+                        pending.put((index, attempt + 1, time.monotonic() + retry.delay_after(attempt)))
+                    else:
+                        result["attempts"] = attempt
+                        finished[index] = result
+            finally:
+                if not abandoned:
+                    exited.append(1)
 
         def start_worker():
             nonlocal workers_started
@@ -781,26 +867,49 @@ class ParallelRunner:
                     if finished[index] is not None:
                         results[index] = finished[index]
                         remaining -= 1
-                    elif (
-                        call_timeout is not None
-                        and now - started_at[index] >= call_timeout
-                        and claims.setdefault(index, _MAIN) == _MAIN
+                        continue
+                    attempt = attempts[index]  # before attempt_started: see above
+                    began = attempt_started[index]
+                    if (
+                        call_timeout is None
+                        or began is None
+                        or now - began < call_timeout
+                        or claims.setdefault((index, attempt), _MAIN) != _MAIN
                     ):
-                        results[index] = self._timed_out_result(items[index], log_buffers[index], call_timeout)
-                        remaining -= 1
-                        if cancel_events is not None:
-                            cancel_events[index].set()
-                        _abandoned_threads.append(threads[index])
-                        abandoned_here += 1
-                    else:
                         still_running.append(index)
+                        continue
+                    if cancel_events is not None:
+                        cancel_events[index].set()
+                    _abandoned_threads.append(threads[index])
+                    abandoned_here += 1
+                    retrying = retry.can_retry(attempt)
+                    if retrying and _abandoned_threads_alive() <= limit:
+                        # The abandoned attempt keeps the old buffer and event:
+                        # its late logs don't mix with the next attempt's.
+                        duration = secs_to_timestr(call_timeout)
+                        log_buffers[index] = log_buffers[index] + [
+                            ("WARN", retry.timed_out_message(attempt, duration))
+                        ]
+                        if cancel_events is not None:
+                            cancel_events[index] = threading.Event()
+                        attempt_started[index] = None
+                        pending.put((index, attempt + 1, now + retry.delay_after(attempt)))
+                        still_running.append(index)
+                    else:
+                        results[index] = self._timed_out_result(
+                            items[index], log_buffers[index], call_timeout, attempt,
+                            not_retried_limit=limit if retrying else None,
+                        )
+                        remaining -= 1
                 running = still_running
-                # Replace the workers abandoned by timed-out calls while calls
-                # are still waiting - unless too many abandoned threads are
-                # alive (from this keyword call or earlier ones). Checked on
-                # every round, so a slot freed by a hung call that finally
+                # Replace the workers abandoned by timed-out calls (or ended
+                # while a timed-out call was put back in the queue) while
+                # calls are still waiting - unless too many abandoned threads
+                # are alive (from this keyword call or earlier ones). Checked
+                # on every round, so a slot freed by a hung call that finally
                 # returns is used again.
-                missing = workers_wanted - (workers_started - abandoned_here)
+                active = workers_started - abandoned_here - len(exited)
+                missing = workers_wanted - active
                 if missing > 0 and not pending.empty():
                     alive = _abandoned_threads_alive()
                     if alive <= limit:
@@ -814,7 +923,7 @@ class ParallelRunner:
                                 f"limit of {limit} (ROBOT_MAX_ABANDONED_THREADS): timed-out workers are no longer "
                                 "replaced, so the remaining calls run with fewer workers."
                             )
-                        if workers_started == abandoned_here:
+                        if active == 0:
                             # No worker left to run them: fail them now instead of waiting forever.
                             self._fail_not_started(pending, items, started_at, finished, log_buffers, limit)
                 if remaining:
@@ -826,7 +935,7 @@ class ParallelRunner:
                     event.set()
             # The calls still running are abandoned too: they count towards the limit.
             for index in range(count):
-                if threads[index] is not None and results[index] is None and finished[index] is None:
+                if attempt_started[index] is not None and results[index] is None and finished[index] is None:
                     _abandoned_threads.append(threads[index])
             self._replay_interrupted(
                 items, results, finished, started_at, log_buffers, error, remove_passing_logs, min_level
@@ -835,12 +944,19 @@ class ParallelRunner:
         return results
 
     @staticmethod
-    def _timed_out_result(item, log_buffer: list, call_timeout: float) -> Dict[str, Any]:
+    def _timed_out_result(
+        item, log_buffer: list, call_timeout: float, attempt: int = 1, not_retried_limit: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """``not_retried_limit``: the abandoned thread limit, when it is what
+        kept the call from being retried (not given: no retries were left)."""
         duration = secs_to_timestr(call_timeout)
         logs = list(log_buffer)
         logs.append(("ERROR", f"Call for item {item} timed out after {duration} (call_timeout); "
                               "it keeps running in the background"))
-        return {"status": "FAIL", "item": item, "logs": logs, "error": f"Timed out after {duration}"}
+        if not_retried_limit is not None:
+            logs.append(("ERROR", f"Call for item {item} not retried: the abandoned thread limit "
+                                  f"({not_retried_limit}, ROBOT_MAX_ABANDONED_THREADS) was reached"))
+        return {"status": "FAIL", "item": item, "logs": logs, "error": f"Timed out after {duration}", "attempts": attempt}
 
     @staticmethod
     def _fail_not_started(pending, items, started_at, finished, log_buffers, limit: int) -> None:
@@ -849,7 +965,7 @@ class ParallelRunner:
         picked up by the main loop like those of finished calls."""
         while True:
             try:
-                index = pending.get_nowait()
+                index, attempt, _ = pending.get_nowait()
             except queue.Empty:
                 return
             item = items[index]
@@ -860,9 +976,10 @@ class ParallelRunner:
             ))
             finished[index] = {
                 "status": "FAIL", "item": item, "logs": log_buffers[index],
-                "error": f"Not started: abandoned thread limit ({limit}) reached",
+                "error": f"Not started: abandoned thread limit ({limit}) reached", "attempts": attempt - 1,
             }
-            started_at[index] = time.monotonic()
+            if started_at[index] is None:
+                started_at[index] = time.monotonic()
 
     def _replay_interrupted(self, items, results, finished, started_at, log_buffers, error, remove_passing_logs, min_level):
         """Replays what the calls logged before the keyword was interrupted.
@@ -892,9 +1009,12 @@ class ParallelRunner:
 
     def _execute_and_capture(
         self, method, item, logger_mapper: Optional[Any], log_buffer: list, kwargs: Dict[str, Any],
-        argument: Any = _NOT_SET,
+        argument: Any = _NOT_SET, log_failure: bool = True,
     ) -> Dict[str, Any]:
         """Worker wrapper to capture logs and results.
+
+        ``log_failure=False`` (an attempt that will be retried) leaves out the
+        ``ERROR`` line of a failure; the caller logs the attempt as a warning.
 
         ``argument`` is what the call receives as its first argument (``item``
         converted by its type hint), ``item`` what the result reports. ``kwargs``
@@ -921,7 +1041,8 @@ class ParallelRunner:
         # SystemExit), the worker must report a result, or the main thread
         # would wait for this call forever.
         except BaseException as e:
-            thread_log(f"Thread failed for item {item}: {str(e)}", "ERROR")
+            if log_failure:
+                thread_log(f"Thread failed for item {item}: {str(e)}", "ERROR")
             return {"status": "FAIL", "item": item, "logs": log_buffer, "error": str(e)}
 
     def _replay_logs(self, results: List[Dict[str, Any]], remove_passing_logs: bool = False, min_level: int = 0):

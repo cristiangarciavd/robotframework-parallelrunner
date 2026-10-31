@@ -97,8 +97,6 @@ could reasonably be added next.
 These are possible directions, not commitments. Contributions welcome — see
 `CONTRIBUTING.md`.
 
-- **Retry mechanism** for individual failed tasks within `run_parallel_scenarios`
-  (e.g. `retries=N`, `retry_backoff=...`).
 - **Richer result aggregation**, e.g. a summary object/keyword (`Get Parallel Summary`)
   instead of only the raw list of per-item dicts.
 - **Structured (JSON) logging** as an alternative to the current text-based replay,

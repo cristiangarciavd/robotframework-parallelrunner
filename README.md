@@ -221,11 +221,6 @@ worker pool, per-call timeouts and one failure report for the whole batch.
   made thread-safe for you; your own keyword's side effects are not. If it
   writes to a shared variable, file, or object without a lock, running it
   concurrently can race the same way any multi-threaded code can.
-- **You need per-item retries.** Not implemented yet (see
-  [ROADMAP.md](https://github.com/cristiangarciavd/robotframework-parallelrunner/blob/main/ROADMAP.md)). A per-call limit is: `call_timeout=10s` fails
-  only the call that hangs and lets the others finish. Note that a timed-out
-  call can't be killed - it keeps running in the background unless the
-  keyword declares `_cancelled` and stops when it is set.
 - **You need process-level isolation** (a crash in one call shouldn't be
   able to affect another) or cross-machine parallelism — that's pabot's
   domain, not this library's.

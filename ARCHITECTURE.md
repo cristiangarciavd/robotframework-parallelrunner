@@ -12,6 +12,7 @@ ParallelRunner/
 │   ├── ParallelRunner/        # Core library (the installable package) -> `Library    ParallelRunner`
 │   │   ├── __init__.py        # Exposes ParallelRunner, ParallelTaskError, __version__
 │   │   ├── parallel_library.py   # ParallelRunner implementation (+ ParallelLibrary alias)
+│   │   ├── retry.py           # RetryPolicy: call_retries/retry_delay/retry_backoff, waits, messages
 │   │   └── version.py         # Reads the version from the installed package metadata
 │   └── parallelrunner.py      # Deprecated shim for the old `parallelrunner.parallel_library` path
 │
@@ -64,11 +65,13 @@ ParallelRunner/
 │   ├── test_timeouts.robot             # Robot [Timeout] interrupts the batch, partial logs, offline
 │   ├── test_call_timeout.robot         # call_timeout and _cancelled, offline
 │   ├── test_keyword_calls.robot        # Argument conversion like a direct call, @keyword names, offline
+│   ├── test_retries.robot              # call_retries, retry_delay, retry_backoff, offline
 │   ├── _fixtures/                      # Suites run in a separate robot process by the two above
 │   │                                   # (skipped by `robot atest`: the name starts with "_")
 │   └── resources/
 │       ├── MapperProbe.py              # Test helper: recording mapper + logging keyword
 │       ├── KeywordProbe.py             # Test helper: typed arguments, a @keyword custom name
+│       ├── FlakyProbe.py               # Test helper: keywords that fail or hang before they pass
 │       └── FixtureRunner.py            # Test helper: runs a fixture suite, reads its output.xml
 │
 ├── utest/                     # pytest unit tests (no Robot execution context needed)
@@ -120,6 +123,9 @@ run_parallel_scenarios(
     return_values_only: bool = False,  # Return a plain tuple of return values instead
     fail_on_error: bool = True,        # Fail if any call failed (False: return statuses instead)
     call_timeout=None,                 # Max time per call ("10s"); a hung call fails alone
+    call_retries=0,                    # Extra attempts for a failed (or timed-out) call
+    retry_delay="1s",                  # Wait before the first retry
+    retry_backoff=1,                   # Multiplies the wait after every failed retry
     **kwargs: Any              # Extra args passed to method
 ) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]
 ```
@@ -138,6 +144,9 @@ run_parallel_scenarios(
 | `return_values_only` | bool | Return a plain `tuple` of each call's return value (call order), instead of the list of result dicts. Raises `ParallelTaskError` on any failure. | False |
 | `fail_on_error` | bool | Raise `ParallelTaskError` if any call failed, after all calls finished and logs were replayed. `False` returns the result list with a `PASS`/`FAIL` status per call instead. | True |
 | `call_timeout` | str/float | Max time per call in Robot time format; a call still running after it fails with `Timed out after ...` and the others keep running | None |
+| `call_retries` | int | Extra attempts for a call that failed or exceeded `call_timeout`; the result's `attempts` tells how many it took | 0 |
+| `retry_delay` | str/float | Wait before the first retry, Robot time format | "1s" |
+| `retry_backoff` | float | Multiplies the wait after every failed retry (1: fixed) | 1 |
 | `**kwargs` | Any | Extra args for method | - |
 
 ### Result ordering
@@ -191,7 +200,7 @@ running `ROBOT_THREAD_WORKERS` calls at a time.
 
 The worker of a timed-out call may still return a moment later. To decide
 without a lock which outcome counts, both sides claim the call with
-`claims.setdefault(i, ...)` (atomic): the worker after its call returns, the
+`claims.setdefault((i, attempt), ...)` (atomic): the worker after its call returns, the
 main thread when the limit is exceeded. The first claim wins. A worker that
 loses stops (it doesn't take new calls - its replacement does), so no more
 than `ROBOT_THREAD_WORKERS` calls are ever running except the abandoned ones.
@@ -213,6 +222,36 @@ A method that declares `_cancelled` gets a `threading.Event` per call. The
 main thread sets it when the call times out, and sets all of them when the
 batch is interrupted (Robot `[Timeout]`), so cooperative keywords stop
 instead of running in the background.
+
+### Retries
+
+`retry.py` holds `RetryPolicy`: it validates `call_retries`, `retry_delay`
+and `retry_backoff`, says whether attempt `n` may be retried
+(`can_retry`), how long to wait after it (`delay_after`), and builds the
+`WARN` lines logged between attempts. It knows nothing about threads;
+`_run_in_threads` uses it.
+
+The queue holds `(call, attempt, earliest start)` entries, so a retry goes
+back into the same queue, after the calls already waiting. The worker that
+takes it waits until its start time (`stop.wait`, so a Robot `[Timeout]`
+cuts the wait short) and runs it. Each attempt has its own claim,
+`claims[(i, attempt)]`, and its own start time (`attempt_started[i]`, `None`
+while waiting), so `call_timeout` applies to each attempt and a late return
+of an abandoned attempt can't be confused with the next one.
+
+- **The call raised:** the worker that ran it puts the retry in the queue,
+  after logging the attempt as `WARN` (the `ERROR` line is only written for
+  the last attempt: `_execute_and_capture(..., log_failure=False)`).
+- **The attempt timed out:** the main thread abandons it as before and, if
+  retries are left and the abandoned threads are within the limit, queues
+  the retry. It gives the call a new log buffer (a copy plus the `WARN`)
+  and a new `_cancelled` event, so the abandoned attempt's late logs and its
+  set event stay with it. Otherwise the call fails with its timeout error.
+
+Since a timed-out call goes back into the queue while workers may have
+ended for lack of work, the main thread counts the workers that ended
+normally (`exited`) and starts new ones when calls are waiting and fewer
+than `min(ROBOT_THREAD_WORKERS, items)` are left.
 
 ### Argument conversion and keyword lookup
 
@@ -425,10 +464,11 @@ Python's GIL (Global Interpreter Lock) limits CPU-bound parallelization. For hea
 
 ## Testing Coverage
 
-Acceptance tests: **82 test cases** across 12 Robot Framework suites in `atest/`.
-Unit tests: **116 pytest tests** in `utest/` (ordering, item selection, failure
+Acceptance tests: **87 test cases** across 13 Robot Framework suites in `atest/`.
+Unit tests: **186 pytest tests** in `utest/` (ordering, item selection, failure
 handling and `fail_on_error`, every log level and its filtering, interruption
-by a timeout, `call_timeout` and `_cancelled`, argument conversion and keyword
+by a timeout, `call_timeout` and `_cancelled`, the abandoned thread limit,
+retries, argument conversion and keyword
 lookup, the thread pool, mapper resolution and warnings, deprecated import
 path).
 
@@ -445,6 +485,7 @@ path).
 | test_log_levels.robot | 10 | What really ends up in the log at every level (TRACE to ERROR, HTML) with `--loglevel` TRACE, DEBUG and the default, and with `thread_log_level`; runs `_fixtures/log_levels.robot` in a separate process. Offline |
 | test_timeouts.robot | 6 | A test or keyword `[Timeout]` fails right away, not when hung calls end; finished and partial logs replayed; next test unaffected; cooperative calls are cancelled; the process exits despite hung calls. Runs `_fixtures/timeouts.robot` in a separate process. Offline |
 | test_call_timeout.robot | 8 | `call_timeout`: only the hung call fails, the others return their results, partial logs kept, the failure can be handled, `_cancelled` stops cooperative calls, time format, invalid values. Offline |
+| test_retries.robot | 5 | `call_retries`: a flaky call passes after retries, a call failing every attempt fails with its last error, `retry_delay` and `retry_backoff` waits, a timed-out call is retried, invalid values. Offline |
 | test_keyword_calls.robot | 6 | Arguments converted like a direct call (named always, string items), conversion errors, `@keyword` custom names, name normalization. Offline |
 
 Run all tests (after `poetry install`):

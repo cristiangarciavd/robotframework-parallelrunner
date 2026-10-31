@@ -76,10 +76,37 @@ class FakeLibrary:
             return "cancelled"
         return "done"
 
+    def flaky(self, spec, _logger=None):
+        """`spec` is "key:N": fails the first N calls for that key, then passes.
+        Records every call in `calls`."""
+        key, times = spec.split(":")
+        with self._lock:
+            self.calls.append(key)
+            count = self.calls.count(key)
+        _logger(f"{key} attempt {count}")
+        if count <= int(times):
+            raise ValueError(f"fail {count}")
+        return count
+
+    def hang_first(self, key, _logger=None, _cancelled=None):
+        """The first call for `key` hangs (until released or cancelled); the
+        next ones return at once whether their own `_cancelled` is set."""
+        with self._lock:
+            self.calls.append(key)
+            first = self.calls.count(key) == 1
+        _logger(f"{key} {'hangs' if first else 'returns'}")
+        if first:
+            if _cancelled.wait(30):
+                self.cancelled.append(key)
+            _logger(f"{key} late log")
+            return "late"
+        return _cancelled.is_set()
+
     def __init__(self):
         self.release = threading.Event()
         self.started = []
         self.cancelled = []
+        self.calls = []
         self._lock = threading.Lock()
         self._running = 0
         self.max_running = 0
@@ -840,6 +867,138 @@ def test_invalid_call_timeout_fails_before_running_anything(runner, robot_logger
 def test_call_timeout_is_not_forwarded_to_the_keyword(runner, robot_logger):
     (value,) = runner.run_parallel_scenarios("Echo Item", "Fake", call_timeout="5s", return_values_only=True)
     assert value == {"item": 0}
+
+
+# --- call_retries (0.5.0) ---
+
+
+def test_a_failed_call_is_retried_until_it_passes(runner, robot_logger, fake_library):
+    results = runner.run_parallel_scenarios(
+        "Flaky", "Fake", for_loop_iterable=["a:2", "b:0"], call_retries=2, retry_delay=0
+    )
+    assert [(r["status"], r["attempts"], r["result"]) for r in results] == [("PASS", 3, 3), ("PASS", 1, 1)]
+    assert results[0]["logs"] == [
+        ("INFO", "a attempt 1"), ("WARN", "Attempt 1 of 3 failed: fail 1; retrying now"),
+        ("INFO", "a attempt 2"), ("WARN", "Attempt 2 of 3 failed: fail 2; retrying now"),
+        ("INFO", "a attempt 3"),
+    ]
+    assert not [msg for level, msg in robot_logger.messages if level == "ERROR"]
+
+
+def test_a_call_failing_every_attempt_fails_with_its_last_error(runner, robot_logger, fake_library):
+    with pytest.raises(ParallelTaskError, match=r"1 of 1 parallel task\(s\) failed: item='a:9': fail 3"):
+        runner.run_parallel_scenarios("Flaky", "Fake", for_loop_iterable=["a:9"], call_retries=2, retry_delay=0)
+    assert fake_library.calls == ["a", "a", "a"]
+    errors = [msg for level, msg in robot_logger.messages if level == "ERROR"]
+    assert errors == ["Thread failed for item a:9: fail 3"]
+
+
+def test_failed_calls_are_not_retried_by_default(runner, robot_logger, fake_library):
+    (result,) = runner.run_parallel_scenarios("Flaky", "Fake", for_loop_iterable=["a:1"], fail_on_error=False)
+    assert (result["status"], result["attempts"]) == ("FAIL", 1)
+    assert fake_library.calls == ["a"]
+
+
+def test_every_result_reports_its_attempts(runner, robot_logger):
+    results = runner.run_parallel_scenarios("Typed", "Fake", for_loop_iterable=["1", "x"], fail_on_error=False)
+    assert [r["attempts"] for r in results] == [1, 0]  # "x" can't be converted: it never ran
+
+
+def test_retry_delay_grows_with_retry_backoff(runner, robot_logger, fake_library):
+    start = time.monotonic()
+    (result,) = runner.run_parallel_scenarios(
+        "Flaky", "Fake", for_loop_iterable=["a:2"], call_retries=2, retry_delay="100ms", retry_backoff=2
+    )
+    assert time.monotonic() - start >= 0.3  # 100 ms + 200 ms
+    warnings = [msg for level, msg in result["logs"] if level == "WARN"]
+    assert warnings == [
+        "Attempt 1 of 3 failed: fail 1; retrying in 100 milliseconds",
+        "Attempt 2 of 3 failed: fail 2; retrying in 200 milliseconds",
+    ]
+
+
+def test_a_retry_runs_after_the_calls_already_waiting(runner, robot_logger, fake_library):
+    runner.max_workers = 1
+    runner.run_parallel_scenarios("Flaky", "Fake", for_loop_iterable=["a:1", "b:0", "c:0"], call_retries=1, retry_delay=0)
+    assert fake_library.calls == ["a", "b", "c", "a"]
+
+
+def test_a_timed_out_attempt_is_retried(runner, robot_logger, fake_library):
+    (result,) = runner.run_parallel_scenarios(
+        "Hang First", "Fake", for_loop_iterable=["x"], call_timeout=0.2, call_retries=1, retry_delay=0
+    )
+    # The retry got its own _cancelled, not the one set for the timed-out attempt.
+    assert (result["status"], result["attempts"], result["result"]) == ("PASS", 2, False)
+    assert wait_until(lambda: fake_library.cancelled == ["x"])
+    assert wait_until(lambda: not worker_threads_alive())
+    # The abandoned attempt's late log stayed out of the result.
+    assert result["logs"] == [
+        ("INFO", "x hangs"),
+        ("WARN", "Attempt 1 of 2 timed out after 200 milliseconds (call_timeout), "
+                 "it keeps running in the background; retrying now"),
+        ("INFO", "x returns"),
+    ]
+
+
+def test_call_timeout_applies_to_each_attempt(runner, robot_logger, fake_library):
+    (result,) = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[30], call_timeout=0.2, call_retries=2, retry_delay=0,
+        fail_on_error=False,
+    )
+    assert (result["error"], result["attempts"]) == ("Timed out after 200 milliseconds", 3)
+    assert fake_library.started == [30, 30, 30]
+
+
+def test_a_timed_out_attempt_is_not_retried_over_the_abandoned_limit(runner, robot_logger, fake_library):
+    runner.max_abandoned_threads = 0
+    (result,) = runner.run_parallel_scenarios(
+        "Wait Seconds", "Fake", for_loop_iterable=[30], call_timeout=0.2, call_retries=3, fail_on_error=False
+    )
+    assert (result["error"], result["attempts"]) == ("Timed out after 200 milliseconds", 1)
+    assert result["logs"][-1] == (
+        "ERROR", "Call for item 30 not retried: the abandoned thread limit (0, ROBOT_MAX_ABANDONED_THREADS) was reached"
+    )
+    assert fake_library.started == [30]
+
+
+def test_a_robot_timeout_stops_the_retries(runner, robot_logger, fake_library):
+    timer = interrupt_main_thread(0.3)
+    try:
+        with pytest.raises(TimeoutExceeded):
+            runner.run_parallel_scenarios(
+                "Flaky", "Fake", for_loop_iterable=["a:1000"], call_retries=1000, retry_delay=0.05
+            )
+    finally:
+        timer.cancel()
+    calls = len(fake_library.calls)
+    time.sleep(0.3)
+    assert len(fake_library.calls) == calls
+    assert wait_until(lambda: not worker_threads_alive())
+
+
+def test_retry_arguments_are_not_forwarded_to_the_keyword(runner, robot_logger):
+    (value,) = runner.run_parallel_scenarios(
+        "Echo Item", "Fake", call_retries=1, retry_delay=0, retry_backoff=2, return_values_only=True
+    )
+    assert value == {"item": 0}
+
+
+@pytest.mark.parametrize(
+    "arguments, message",
+    [
+        ({"call_retries": "abc"}, "Invalid call_retries 'abc'"),
+        ({"call_retries": -1}, "Invalid call_retries -1"),
+        ({"call_retries": 1.5}, "Invalid call_retries 1.5"),
+        ({"retry_delay": "soon"}, "Invalid retry_delay 'soon'"),
+        ({"retry_delay": "-1s"}, "retry_delay can't be negative"),
+        ({"retry_backoff": 0.5}, "retry_backoff must be at least 1"),
+        ({"retry_backoff": "fast"}, "Invalid retry_backoff 'fast'"),
+    ],
+)
+def test_invalid_retry_arguments_fail_before_running_anything(runner, robot_logger, fake_library, arguments, message):
+    with pytest.raises(ValueError, match=message):
+        runner.run_parallel_scenarios("Flaky", "Fake", for_loop_iterable=["a:0"], **arguments)
+    assert fake_library.calls == []
 
 
 # --- _cancelled (0.4.0) ---
