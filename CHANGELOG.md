@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Planned as 0.6.0 (minor release).
+## [0.6.0] - 2026-11-10
 
 ### Added
 - **`thread_workers` on `Run Parallel Scenarios`: the number of workers for
