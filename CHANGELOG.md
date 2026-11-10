@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Planned as 0.6.0 (minor release).
+
+### Added
+- **`thread_workers` on `Run Parallel Scenarios`: the number of workers for
+  a single call.** `thread_workers=2` runs at most two calls at once for
+  that keyword call only, e.g. to seed data in a Suite Setup against a
+  service that starts returning 504 under load, while every other call
+  keeps using `ROBOT_THREAD_WORKERS`. Not given (or `None`/empty): same
+  behavior as before. It must be a whole number of at least 1 (`"3"` from
+  Robot works); an invalid value (`0`, `-1`, `"abc"`, `2.5`) fails the
+  keyword with a `ValueError` before any thread starts - unlike an invalid
+  `ROBOT_THREAD_WORKERS`, which is only a warning. The value is never stored
+  on the library (GLOBAL scope), so it can't leak into later calls. The
+  `ROBOT_MAX_ABANDONED_THREADS` default stays twice the global
+  `ROBOT_THREAD_WORKERS`, because it counts abandoned threads across the
+  whole run.
+
+### Changed
+- **Possible incompatibility: a keyword argument named `thread_workers` is
+  no longer forwarded** to the target method through `**kwargs`; `Run
+  Parallel Scenarios` takes it. A method that already had a parameter with
+  that name receives its default instead. No method in this repository's
+  `examples/` or `atest/` does. Rename the parameter in the target method if
+  yours does.
+
 ## [0.5.0] - 2026-10-31
 
 ### Added

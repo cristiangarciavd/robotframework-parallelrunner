@@ -179,7 +179,8 @@ Things to keep in mind:
 - **Concurrency multiplies.** The number of simultaneous calls is roughly
   pabot processes × `ROBOT_THREAD_WORKERS`: 4 processes × 4 workers means up
   to 16 concurrent requests against the same API or database. Lower one of
-  the two if you hit rate limits, connection-pool limits or lock timeouts.
+  the two if you hit rate limits, connection-pool limits or lock timeouts,
+  or pass `thread_workers=2` to just the calls that hit the fragile service.
 - **Shared test resources can collide across processes.** Data, files, user
   accounts, or a table that a `Suite Setup` resets are visible to every
   process. With `--testlevelsplit`, each test of a suite runs its own
@@ -202,7 +203,7 @@ internal execution context and output.
 |---|---|---|
 | Runs | Any keyword, including user keywords | A method of a Python library that accepts `_logger` |
 | Usage | `Async Run` per call, `Async Get` later | One `Run Parallel Scenarios` call over a list, or `repeat=N` |
-| Concurrency | Python's default thread pool size | `ROBOT_THREAD_WORKERS` |
+| Concurrency | Python's default thread pool size | `ROBOT_THREAD_WORKERS`, or `thread_workers` per call |
 | Hung calls | `Async Get    timeout=...` stops waiting for them | `call_timeout` fails only that call and frees its slot for the next item |
 | Failures | `Async Get` raises the call's error | One failure listing every failed item, or a `PASS`/`FAIL` per item with `fail_on_error=False` |
 | Robot internals | Works with the internal execution context and output | Not patched; logs only from the main thread, through the public logger API; tested on Robot Framework 5, 6 and 7 |

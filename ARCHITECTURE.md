@@ -162,9 +162,14 @@ order they finish in. This makes direct indexing - and tuple-unpacking via
 
 ### Thread pool and timeouts
 
-Each `Run Parallel Scenarios` call starts its own `min(ROBOT_THREAD_WORKERS,
-number of calls)` worker threads, which take call indexes from a queue until
-it is empty. The library does not use `concurrent.futures.ThreadPoolExecutor`
+Each `Run Parallel Scenarios` call starts its own `min(workers, number of
+calls)` worker threads, which take call indexes from a queue until it is
+empty. `workers` is the call's `thread_workers` argument when given, or else
+`ROBOT_THREAD_WORKERS` (read once into `self.max_workers` at import). It is
+resolved per call and passed to `_run_in_threads` as a parameter, never
+stored on the library: the library has GLOBAL scope, so storing it would
+leak one call's value into the next. Below, "`ROBOT_THREAD_WORKERS`" means
+that per-call value. The library does not use `concurrent.futures.ThreadPoolExecutor`
 (it did before 0.3.1), for two reasons that both come from Robot's
 `[Timeout]`:
 
@@ -206,7 +211,9 @@ loses stops (it doesn't take new calls - its replacement does), so no more
 than `ROBOT_THREAD_WORKERS` calls are ever running except the abandoned ones.
 
 The abandoned threads are limited by `ROBOT_MAX_ABANDONED_THREADS` (default
-twice the workers). The main thread keeps them in a module-level list
+twice the global `ROBOT_THREAD_WORKERS`, never a call's `thread_workers`:
+the count spans the whole run, so one call asking for fewer workers must not
+lower the limit for threads earlier calls left running). The main thread keeps them in a module-level list
 (`_abandoned_threads`), shared by every keyword call of the run, because hung
 calls pile up across tests, not within one call. Threads interrupted by a
 Robot `[Timeout]` are added too. Dead threads are dropped whenever the list is

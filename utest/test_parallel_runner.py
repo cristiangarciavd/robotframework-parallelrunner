@@ -1136,3 +1136,67 @@ def test_log_to_robot_accepts_the_same_levels_as_the_injected_logger(robot_logge
         ("HTML", "msg at HTML"),
         ("INFO", "default level"),
     ]
+
+
+# --- thread_workers (0.6.0) ---
+
+
+def test_thread_workers_caps_concurrency_below_the_global_value(robot_logger, monkeypatch, fake_library):
+    monkeypatch.setenv("ROBOT_THREAD_WORKERS", "8")
+    runner = ParallelRunner()
+    monkeypatch.setattr(runner, "_get_library_instance_owning_keyword", lambda keyword, library: fake_library)
+    assert runner.max_workers == 8
+    runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[0.05] * 10, thread_workers=2)
+    assert fake_library.max_running == 2
+
+
+def test_thread_workers_one_runs_the_calls_one_at_a_time(runner, robot_logger, fake_library):
+    runner.max_workers = 6
+    runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[0.02] * 5, thread_workers="1")
+    assert fake_library.max_running == 1
+
+
+@pytest.mark.parametrize("value", [None, "", "None"])
+def test_thread_workers_not_given_uses_the_global_value(runner, robot_logger, fake_library, value):
+    runner.max_workers = 3
+    runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[0.05] * 9, thread_workers=value)
+    assert fake_library.max_running == 3
+
+
+@pytest.mark.parametrize("value", [0, -1, "0", "abc", "2.5", 2.5, True])
+def test_invalid_thread_workers_fails_before_anything_runs(runner, robot_logger, fake_library, monkeypatch, value):
+    seen = started_threads(monkeypatch)
+    with pytest.raises(ValueError, match=r"Invalid thread_workers .*: expected a whole number of at least 1"):
+        runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[0.01] * 3, thread_workers=value)
+    assert seen == []
+    assert fake_library.max_running == 0
+    assert robot_logger.messages == []
+
+
+def test_thread_workers_above_the_item_count_starts_one_thread_per_item(runner, robot_logger, monkeypatch):
+    seen = started_threads(monkeypatch)
+    runner.run_parallel_scenarios("Echo Item", "Fake", repeat=2, thread_workers=10)
+    assert len(seen) == 2
+
+
+def test_thread_workers_is_not_stored_on_the_global_library(runner, robot_logger, fake_library):
+    runner.max_workers = 3
+    runner.run_parallel_scenarios("Echo Item", "Fake", repeat=4, thread_workers=1)
+    assert runner.max_workers == 3
+    runner.run_parallel_scenarios("Wait Seconds", "Fake", for_loop_iterable=[0.05] * 6)
+    assert fake_library.max_running == 3
+
+
+def test_thread_workers_is_not_forwarded_to_the_keyword(runner, robot_logger):
+    results = runner.run_parallel_scenarios("Echo Item", "Fake", repeat=1, thread_workers=2, extra="x")
+    assert results[0]["result"] == {"item": 0, "extra": "x"}
+
+
+def test_abandoned_thread_limit_stays_tied_to_the_global_workers(runner, robot_logger, monkeypatch):
+    runner.max_workers = 3
+    runner.max_abandoned_threads = None
+    limits = []
+    original = runner._abandoned_thread_limit
+    monkeypatch.setattr(runner, "_abandoned_thread_limit", lambda: limits.append(original()) or limits[-1])
+    runner.run_parallel_scenarios("Echo Item", "Fake", repeat=2, thread_workers=1)
+    assert limits == [6]

@@ -132,8 +132,11 @@ class ParallelRunner:
 
     = How it works =
 
-    - Each call runs on one of a pool of worker threads (see
-      ``ROBOT_THREAD_WORKERS``), created for that keyword call.
+    - Each call runs on one of a pool of worker threads, created for that
+      keyword call. Their number is ``ROBOT_THREAD_WORKERS`` (default ``4``)
+      for every call, or ``thread_workers`` for a single call - e.g.
+      ``thread_workers=2`` to seed data in a Suite Setup against a service
+      that starts failing under load, without changing the global value.
       ``BuiltIn().run_keyword`` is *not* used inside threads (it is not
       thread-safe); the underlying Python method of the target library is
       called directly instead.
@@ -267,11 +270,12 @@ class ParallelRunner:
 
     The timed-out call can't be killed either: it keeps running in the
     background, and a new worker thread takes its place so the remaining
-    calls still run ``ROBOT_THREAD_WORKERS`` at a time.
+    calls still run ``ROBOT_THREAD_WORKERS`` (or ``thread_workers``) at a time.
 
     So that calls that hang can't pile up hundreds of threads (and open
     connections), the abandoned threads still running are limited by
-    ``ROBOT_MAX_ABANDONED_THREADS`` (default: twice ``ROBOT_THREAD_WORKERS``).
+    ``ROBOT_MAX_ABANDONED_THREADS`` (default: twice ``ROBOT_THREAD_WORKERS``,
+    whatever ``thread_workers`` a call uses).
     They are counted across the whole run - calls abandoned by earlier tests,
     or interrupted by a Robot ``[Timeout]``, count too - and a thread stops
     counting as soon as its call returns. Above the limit, a warning is logged
@@ -346,8 +350,8 @@ class ParallelRunner:
     = Environment variables =
 
     | =Variable=             | =Description= |
-    | ROBOT_THREAD_WORKERS   | Number of worker threads. Read when the library is imported. Default ``4``. An invalid value is ignored with a warning. |
-    | ROBOT_MAX_ABANDONED_THREADS | Maximum number of threads left running by timed-out calls before they are no longer replaced. Read when the library is imported. Default: twice ``ROBOT_THREAD_WORKERS``. ``0`` never replaces them. An invalid value is ignored with a warning. See `Call timeouts and cancellation`. |
+    | ROBOT_THREAD_WORKERS   | Number of worker threads. Read when the library is imported. Default ``4``. An invalid value is ignored with a warning. A single call can use another number with ``thread_workers``, which fails on an invalid value instead. |
+    | ROBOT_MAX_ABANDONED_THREADS | Maximum number of threads left running by timed-out calls before they are no longer replaced. Read when the library is imported. Default: twice ``ROBOT_THREAD_WORKERS`` (not ``thread_workers``: the limit covers the whole run). ``0`` never replaces them. An invalid value is ignored with a warning. See `Call timeouts and cancellation`. |
     | ROBOT_LOGGER_MAPPER    | Default ``logger_mapper`` as a ``module.function`` path, used when the argument is not given. See `Custom logger mappers`. |
 
     = When not to use it =
@@ -407,6 +411,10 @@ class ParallelRunner:
         return limit
 
     def _abandoned_thread_limit(self) -> int:
+        # Tied to the global ROBOT_THREAD_WORKERS (self.max_workers), never to
+        # a call's `thread_workers`: the abandoned threads are counted across
+        # the whole run, so a call with `thread_workers=1` must not lower the
+        # limit for threads that earlier calls left running.
         if self.max_abandoned_threads is None:
             return 2 * self.max_workers
         return self.max_abandoned_threads
@@ -426,6 +434,7 @@ class ParallelRunner:
         call_retries: Union[int, str, None] = 0,
         retry_delay: Union[str, float, None] = "1s",
         retry_backoff: Union[float, str, None] = 1,
+        thread_workers: Union[int, str, None] = None,
         **kwargs
     ) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]:
         """Runs ``keyword`` from ``library`` concurrently, once per item or N times.
@@ -477,8 +486,17 @@ class ParallelRunner:
           Default ``1s``; ``0`` retries right away.
         - ``retry_backoff``: Multiplies the wait after every failed retry:
           ``2`` waits 1 s, 2 s, 4 s... Default ``1`` (always the same wait).
+        - ``thread_workers``: Maximum number of calls running at once for this
+          keyword call only, e.g. ``thread_workers=2`` against a service that
+          starts failing under load. A whole number of at least 1; an invalid
+          value fails the keyword before anything runs. Not given (default):
+          ``ROBOT_THREAD_WORKERS``. It does not change the
+          ``ROBOT_MAX_ABANDONED_THREADS`` default, which stays twice
+          ``ROBOT_THREAD_WORKERS``. See `How it works`.
         - ``**kwargs``: Any other named argument is passed to every call,
-          converted by the method's type hints like in a direct call.
+          converted by the method's type hints like in a direct call. The
+          names of the arguments above (``thread_workers`` included) are
+          taken by this keyword and never forwarded.
 
         Returns a list of result dictionaries (see `Result format`), in call
         order: entry ``i`` belongs to ``for_loop_iterable[i]`` / repeat
@@ -493,6 +511,7 @@ class ParallelRunner:
         | ${results}=   | Run Parallel Scenarios | keyword=Verify Agent Data | library=MyLibrary       | for_loop_iterable=${agents} | fail_on_error=False |
         | ${results}=   | Run Parallel Scenarios | keyword=Verify Agent Data | library=MyLibrary       | for_loop_iterable=${agents} | call_timeout=30s |
         | ${results}=   | Run Parallel Scenarios | keyword=Verify Agent Data | library=MyLibrary       | for_loop_iterable=${agents} | call_retries=2 | retry_delay=500ms |
+        | ${ids}=       | Run Parallel Scenarios | keyword=Create Customer   | library=MyLibrary       | repeat=50 | thread_workers=2 | return_values_only=True |
         """
         # Determine items to process. NOTE: `repeat or 1` would be wrong here -
         # 0 is falsy in Python, so an explicit repeat=0 would silently fall
@@ -513,6 +532,8 @@ class ParallelRunner:
         min_level = self._resolve_thread_log_level(thread_log_level)
         timeout_seconds = self._resolve_call_timeout(call_timeout)
         retry = RetryPolicy.from_arguments(call_retries, retry_delay, retry_backoff)
+        # Resolved per call, never stored: the library has GLOBAL scope.
+        workers = self._resolve_thread_workers(thread_workers, self.max_workers)
 
         # Note: We must call the underlying Python method, not BuiltIn().run_keyword
         # because run_keyword is not thread-safe.
@@ -520,7 +541,8 @@ class ParallelRunner:
         method = self._get_keyword_method(lib_instance, keyword)
 
         results = self._run_in_threads(
-            method, list(items), effective_mapper, remove_passing_logs, min_level, kwargs, timeout_seconds, retry
+            method, list(items), effective_mapper, remove_passing_logs, min_level, kwargs, timeout_seconds, retry,
+            workers,
         )
 
         # Step: Re-play logs into Robot Framework sequentially
@@ -678,6 +700,27 @@ class ParallelRunner:
         return seconds
 
     @staticmethod
+    def _resolve_thread_workers(thread_workers: Any, default: int) -> int:
+        """Returns ``thread_workers`` as an int, or ``default`` (the global
+        ROBOT_THREAD_WORKERS) when not given. Unlike the environment variable,
+        an invalid value is an error, not a warning: the caller asked for it."""
+        if _not_given(thread_workers):
+            return default
+        workers = None
+        if isinstance(thread_workers, int) and not isinstance(thread_workers, bool):
+            workers = thread_workers
+        elif isinstance(thread_workers, str):
+            try:
+                workers = int(thread_workers.strip())
+            except ValueError:
+                pass
+        if workers is None or workers < 1:
+            raise ValueError(
+                f"Invalid thread_workers {thread_workers!r}: expected a whole number of at least 1."
+            )
+        return workers
+
+    @staticmethod
     def _converter_for(method):
         """Returns a function converting ``(positional, named)`` arguments by
         the method's type hints and default values, exactly like Robot does
@@ -708,10 +751,12 @@ class ParallelRunner:
         kwargs: Dict[str, Any],
         call_timeout: Optional[float] = None,
         retry: RetryPolicy = NO_RETRIES,
+        workers: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Runs ``method`` once per item on up to ``max_workers`` daemon threads
-        and returns the result dicts in call order (NOT completion order).
+        Runs ``method`` once per item on up to ``workers`` daemon threads
+        (None: ``self.max_workers``) and returns the result dicts in call
+        order (NOT completion order).
 
         A failed attempt is tried again while ``retry`` allows it: the worker
         puts the call back in the queue with the time it may start again, and
@@ -722,8 +767,9 @@ class ParallelRunner:
         With ``call_timeout``, a call still running after that many seconds
         becomes a ``FAIL`` result: its thread is abandoned (it can't be
         killed) and a new worker takes its place, so the other calls keep
-        running ``max_workers`` at a time - while no more than the limit of
-        abandoned threads (``_abandoned_thread_limit``) are alive. Past it,
+        running ``workers`` at a time - while no more than the limit of
+        abandoned threads (``_abandoned_thread_limit``, based on the global
+        ``self.max_workers``, not on ``workers``) are alive. Past it,
         no replacements are started; if every worker is gone, the calls that
         did not start fail right away.
 
@@ -734,8 +780,10 @@ class ParallelRunner:
         threads (unlike the ones of ``ThreadPoolExecutor``), so a call that
         never returns can't keep the Robot process alive at exit.
         """
-        if self.max_workers < 1:
-            raise ValueError(f"ROBOT_THREAD_WORKERS must be at least 1, got {self.max_workers}.")
+        if workers is None:
+            workers = self.max_workers
+        if workers < 1:
+            raise ValueError(f"ROBOT_THREAD_WORKERS must be at least 1, got {workers}.")
 
         count = len(items)
         convert = self._converter_for(method)
@@ -823,7 +871,7 @@ class ParallelRunner:
                     if claims.setdefault((index, attempt), _WORKER) != _WORKER:
                         # The attempt timed out and a new worker took this
                         # thread's place: stop here, so no more than
-                        # max_workers calls run.
+                        # `workers` calls run.
                         abandoned = True
                         return
                     if result["status"] == "FAIL" and not last:
@@ -842,7 +890,7 @@ class ParallelRunner:
             workers_started += 1
             threading.Thread(target=worker, name=f"ParallelRunner-worker-{workers_started}", daemon=True).start()
 
-        workers_wanted = min(self.max_workers, count)
+        workers_wanted = min(workers, count)
         limit = self._abandoned_thread_limit()
         abandoned_here = 0
         limit_warned = False

@@ -13,7 +13,8 @@ from ParallelRunner import ParallelRunner
 - `ROBOT_LIBRARY_SCOPE = 'GLOBAL'`
 - Constructor takes no arguments. It reads the `ROBOT_THREAD_WORKERS`
   environment variable (default `4`): the maximum number of worker threads
-  per `Run Parallel Scenarios` call.
+  per `Run Parallel Scenarios` call, unless that call passes
+  `thread_workers`.
 
 As a Robot Framework library:
 
@@ -38,6 +39,11 @@ def run_parallel_scenarios(
     logger_mapper: Optional[Any] = None,
     return_values_only: bool = False,
     fail_on_error: bool = True,
+    call_timeout: Union[str, float, None] = None,
+    call_retries: Union[int, str, None] = 0,
+    retry_delay: Union[str, float, None] = "1s",
+    retry_backoff: Union[float, str, None] = 1,
+    thread_workers: Union[int, str, None] = None,
     **kwargs: Any,
 ) -> Union[List[Dict[str, Any]], Tuple[Any, ...]]
 ```
@@ -64,7 +70,8 @@ then fails with `ParallelTaskError` (unless `fail_on_error=False`).
 | `call_retries` | `int`, `str` or `None` | No | `0` | How many more times a failed call is run before it counts as failed. A call that exceeds `call_timeout` is retried too (`call_timeout` applies to each attempt), but only while the abandoned threads are within `ROBOT_MAX_ABANDONED_THREADS`; otherwise it fails with its timeout error and an `ERROR` saying it was not retried. Every attempt's logs are kept, separated by a `WARN` (`Attempt 1 of 3 failed: <error>; retrying in 1 second`); only the last failure is logged as `ERROR`. A retry waits in a worker thread, queued after the calls already waiting. A Robot `[Timeout]` stops the retries. Not a whole number of at least 0: fails the keyword before anything runs. Not forwarded to the keyword. Added in 0.5.0. |
 | `retry_delay` | `str`, `float` or `None` | No | `"1s"` | Wait before the first retry, in Robot's time format; `0` retries right away. Negative or unparsable values fail the keyword before anything runs. Not forwarded to the keyword. Added in 0.5.0. |
 | `retry_backoff` | `float`, `str` or `None` | No | `1` | Multiplies the wait after every failed retry: the wait before attempt `n + 1` is `retry_delay * retry_backoff ** (n - 1)`, so `retry_delay=1s retry_backoff=2` waits 1 s, 2 s, 4 s... `1` keeps the wait fixed. Below 1 (or not a finite number) fails the keyword before anything runs. Not forwarded to the keyword. Added in 0.5.0. |
-| `**kwargs` | `Any` | No | - | Any additional keyword arguments are forwarded verbatim to every call of `keyword`. |
+| `thread_workers` | `int`, `str` or `None` | No | `None` | Maximum number of calls running at once for this keyword call only, e.g. `thread_workers=2` to seed data in a Suite Setup against a service that starts returning 504 under load, without changing `ROBOT_THREAD_WORKERS` for the rest of the run. The value is used for this call and never stored on the library (which has GLOBAL scope). A timed-out call's worker is replaced as usual, so the remaining calls still run `thread_workers` at a time. It does not change the `ROBOT_MAX_ABANDONED_THREADS` default, which stays twice `ROBOT_THREAD_WORKERS` because it covers the whole run. `None`, `""` or `"NONE"`: `ROBOT_THREAD_WORKERS`. Not a whole number of at least 1 (`0`, `-1`, `"abc"`, `2.5`): fails the keyword with `ValueError` before anything runs - unlike an invalid `ROBOT_THREAD_WORKERS`, which is only a warning. Not forwarded to the keyword. Added in 0.6.0. |
+| `**kwargs` | `Any` | No | - | Any additional keyword arguments are forwarded verbatim to every call of `keyword`. The parameter names above are taken by `Run Parallel Scenarios` and never forwarded (since 0.6.0 that includes `thread_workers`). |
 
 ### Return value
 
@@ -100,8 +107,8 @@ value, in the same call order described above. Raises `ParallelTaskError`
 
 | Variable | Effect |
 |---|---|
-| `ROBOT_THREAD_WORKERS` | Maximum number of calls running at once per `Run Parallel Scenarios` call (daemon threads, started per call; a timed-out call's thread is replaced). Default: `4`. A value that is not a whole number of at least 1 is ignored with a warning. Read once, at `ParallelRunner.__init__`. |
-| `ROBOT_MAX_ABANDONED_THREADS` | Maximum number of abandoned threads (calls timed out by `call_timeout` or interrupted by a Robot `[Timeout]` that are still running) for which timed-out workers are still replaced. Counted across the whole run, not per keyword call; a thread stops counting when its call returns. Above it, a warning is logged and the remaining calls run with fewer workers; if none is left, they fail without starting (`Not started: abandoned thread limit (N) reached`). Each keyword call still starts its normal number of workers. Default: twice `ROBOT_THREAD_WORKERS`; `0` never replaces them. A value that is not a whole number of at least 0 is ignored with a warning. Read once, at `ParallelRunner.__init__`. Added in 0.5.0. |
+| `ROBOT_THREAD_WORKERS` | Maximum number of calls running at once per `Run Parallel Scenarios` call (daemon threads, started per call; a timed-out call's thread is replaced). Default: `4`. A value that is not a whole number of at least 1 is ignored with a warning. Read once, at `ParallelRunner.__init__`. A single call can use another number with the `thread_workers` argument. |
+| `ROBOT_MAX_ABANDONED_THREADS` | Maximum number of abandoned threads (calls timed out by `call_timeout` or interrupted by a Robot `[Timeout]` that are still running) for which timed-out workers are still replaced. Counted across the whole run, not per keyword call; a thread stops counting when its call returns. Above it, a warning is logged and the remaining calls run with fewer workers; if none is left, they fail without starting (`Not started: abandoned thread limit (N) reached`). Each keyword call still starts its normal number of workers. Default: twice `ROBOT_THREAD_WORKERS` (never derived from a call's `thread_workers`, since the limit covers the whole run); `0` never replaces them. A value that is not a whole number of at least 0 is ignored with a warning. Read once, at `ParallelRunner.__init__`. Added in 0.5.0. |
 | `ROBOT_LOGGER_MAPPER` | Global default for `logger_mapper` when the parameter is not passed explicitly. Must be a dotted `module.function` path (e.g. `examples.custom_logger.custom_logging_mapper.custom_logger_adapter`); a bare name is ignored with a warning. It must be a real environment variable (shell, or `Set Environment Variable` in a Suite Setup): a Robot variable given with `--variable` is not read. A resolvable `logger_mapper` argument always takes precedence over this variable. |
 
 ### Method contract for `keyword`
@@ -202,10 +209,11 @@ API, but documented here for maintainers:
 - `_get_library_instance_owning_keyword(keyword_name, library)` - resolves the Robot Framework library instance and validates that it has the target method.
 - `_get_keyword_method(lib_instance, keyword_name)` / `_find_keyword_method(...)` - finds the method by name or `@keyword` custom name, ignoring case, spaces and underscores.
 - `_resolve_call_timeout(call_timeout)` - parses `call_timeout` (Robot time format) into seconds, or `None`.
+- `_resolve_thread_workers(thread_workers, default)` - validates `thread_workers` (a whole number of at least 1, or a string holding one) and returns it, or `default` (`self.max_workers`) when not given; raises `ValueError` otherwise.
 - `_converter_for(method)` - Robot's own argument conversion (`PythonArgumentParser(...).convert`) for the method, or `None` if its signature can't be parsed.
 - `_accepts_cancel_event(method)` - whether the method declares `_cancelled`.
 - `_resolve_thread_log_level(thread_log_level)` - turns `thread_log_level` into a numeric minimum; warns on an unknown value.
-- `_run_in_threads(method, items, logger_mapper, remove_passing_logs, min_level, kwargs, call_timeout, retry)` - converts the arguments, starts the daemon worker threads, waits for the results (in short sleeps, so a Robot `[Timeout]` can interrupt it), times out attempts that exceed `call_timeout` (starting a replacement worker, within the abandoned thread limit), queues retries as `retry` (a `RetryPolicy`) allows, and on interruption stops new calls, sets the `_cancelled` events and replays the partial logs.
+- `_run_in_threads(method, items, logger_mapper, remove_passing_logs, min_level, kwargs, call_timeout, retry, workers)` - converts the arguments, starts up to `workers` daemon worker threads (`None`: `self.max_workers`), waits for the results (in short sleeps, so a Robot `[Timeout]` can interrupt it), times out attempts that exceed `call_timeout` (starting a replacement worker, within the abandoned thread limit), queues retries as `retry` (a `RetryPolicy`) allows, and on interruption stops new calls, sets the `_cancelled` events and replays the partial logs.
 - `_timed_out_result(item, log_buffer, call_timeout, attempt, not_retried_limit)` - the `FAIL` result of a timed-out call.
 - `_fail_not_started(...)` - fails the calls still queued when no worker is left (abandoned thread limit reached).
 - `ParallelRunner.retry.RetryPolicy` - `call_retries`, `retry_delay` and `retry_backoff`: `from_arguments(...)` validates them, `can_retry(attempt)` and `delay_after(attempt)` decide whether and when to retry, and it builds the messages logged between attempts.
